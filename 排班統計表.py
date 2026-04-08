@@ -1,7 +1,9 @@
 import os
-import requests
-from bs4 import BeautifulSoup
+import re
 from datetime import datetime
+
+import requests
+
 from accounts import ACCOUNTS
 from paths import PATH_SCHEDULE
 
@@ -17,17 +19,25 @@ HEADERS = {
 }
 
 
+def extract_csrf_token(html: str) -> str:
+    patterns = [
+        r'<input[^>]*name=["\']_token["\'][^>]*value=["\']([^"\']+)["\']',
+        r'<input[^>]*value=["\']([^"\']+)["\'][^>]*name=["\']_token["\']',
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, html, re.IGNORECASE)
+        if match:
+            return match.group(1)
+    raise RuntimeError("找不到 _token，無法登入。")
+
+
 def login(email: str, password: str) -> requests.Session:
     session = requests.Session()
 
-    res = session.get(LOGIN_URL, headers=HEADERS, allow_redirects=True)
-    soup = BeautifulSoup(res.text, "html.parser")
+    res = session.get(LOGIN_URL, headers=HEADERS, allow_redirects=True, timeout=30)
+    res.raise_for_status()
 
-    token_input = soup.find("input", {"name": "_token"})
-    if not token_input:
-        raise RuntimeError("找不到 _token，無法登入。")
-
-    csrf_token = token_input.get("value")
+    csrf_token = extract_csrf_token(res.text)
 
     payload = {
         "_token": csrf_token,
@@ -35,7 +45,14 @@ def login(email: str, password: str) -> requests.Session:
         "password": password,
     }
 
-    login_res = session.post(LOGIN_URL, data=payload, headers=HEADERS, allow_redirects=True)
+    login_res = session.post(
+        LOGIN_URL,
+        data=payload,
+        headers=HEADERS,
+        allow_redirects=True,
+        timeout=30,
+    )
+    login_res.raise_for_status()
 
     if "login" in login_res.url.lower():
         raise RuntimeError(f"{email} 登入失敗")
@@ -63,7 +80,7 @@ def get_month_strings():
 
 def export_schedule(session: requests.Session, month: str, filename: str):
     url = f"{EXPORT_BASE}?month={month}"
-    res = session.get(url, headers=HEADERS, allow_redirects=True)
+    res = session.get(url, headers=HEADERS, allow_redirects=True, timeout=60)
 
     content_type = res.headers.get("Content-Type", "")
     if res.status_code != 200:
