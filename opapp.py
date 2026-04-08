@@ -1,5 +1,6 @@
-import os
+from pathlib import Path
 import subprocess
+import sys
 from datetime import datetime
 
 import streamlit as st
@@ -11,10 +12,11 @@ st.set_page_config(
 )
 
 # ===== 基本設定 =====
-BASE_DIR = "/Users/jenny/lemon"
-LOG_DIR = os.path.join(BASE_DIR, "logs")
-
-os.makedirs(LOG_DIR, exist_ok=True)
+# 使用目前專案目錄，避免寫死本機路徑 /Users/jenny/lemon
+BASE_DIR = Path(__file__).resolve().parent
+LOG_DIR = BASE_DIR / "logs"
+LOG_DIR.mkdir(exist_ok=True)
+PYTHON_BIN = sys.executable or "python3"
 
 # ===== 頁面樣式 =====
 st.markdown("""
@@ -69,15 +71,16 @@ st.markdown("""
 
 st.markdown('<div class="title">📊 營運報表控制台</div>', unsafe_allow_html=True)
 st.markdown('<div class="subtitle">手動執行日常報表、月報表、儲值金相關報表</div>', unsafe_allow_html=True)
+st.caption(f"專案目錄：{BASE_DIR}")
 
 # ===== 工具函式 =====
 def run_python_script(script_name: str, args=None):
     if args is None:
         args = []
 
-    script_path = os.path.join(BASE_DIR, script_name)
+    script_path = BASE_DIR / script_name
 
-    if not os.path.exists(script_path):
+    if not script_path.exists():
         return {
             "ok": False,
             "stdout": "",
@@ -85,14 +88,14 @@ def run_python_script(script_name: str, args=None):
             "cmd": "",
         }
 
-    cmd = ["python3", script_path] + [str(a) for a in args]
+    cmd = [PYTHON_BIN, str(script_path)] + [str(a) for a in args]
 
     try:
         result = subprocess.run(
             cmd,
             capture_output=True,
             text=True,
-            cwd=BASE_DIR,
+            cwd=str(BASE_DIR),
         )
         return {
             "ok": result.returncode == 0,
