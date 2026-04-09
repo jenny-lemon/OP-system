@@ -1,10 +1,9 @@
 """
-opapp.py  ──  營運報表控制台 v2
-Enhanced with:
-  • 排程執行狀態主控表（每日 / 每月）
-  • 輸出報表檔案瀏覽（資料夾 + 狀態）
-  • 線上新增 / 修改 / 刪除腳本設定
-  • 手動觸發執行
+opapp.py  ──  營運報表控制台 v4
+- 選單固定在頁面最上方（捲動後仍固定）
+- 排程主控表每列有執行鍵
+- 文字顏色修正，全部清晰可見
+- 帳密從本機 accounts.py 讀取（加入 .gitignore 不上傳）
 """
 
 from pathlib import Path
@@ -12,9 +11,26 @@ import subprocess
 import sys
 import json
 import os
-from datetime import datetime, date, timedelta
+from datetime import datetime
 
 import streamlit as st
+
+# ── 帳密從本機 accounts.py 讀取 ────────────────────────────────
+try:
+    from accounts import ACCOUNTS  # type: ignore
+except ImportError:
+    ACCOUNTS = {}
+
+# ──────────────────────────────────────────────
+# Paths
+# ──────────────────────────────────────────────
+BASE_DIR   = Path(__file__).resolve().parent
+OUTPUT_DIR = BASE_DIR / "output"
+CONFIG_F   = BASE_DIR / "schedule_config.json"
+RUNLOG_F   = BASE_DIR / "run_log.json"
+OUTPUT_DIR.mkdir(exist_ok=True)
+
+PYTHON_BIN = sys.executable or "python3"
 
 # ──────────────────────────────────────────────
 # Page config
@@ -23,48 +39,317 @@ st.set_page_config(
     page_title="營運報表控制台",
     page_icon="📊",
     layout="wide",
+    initial_sidebar_state="collapsed",
 )
 
 # ──────────────────────────────────────────────
-# Paths
+# CSS  ── 固定頂部 + 清晰配色
 # ──────────────────────────────────────────────
-BASE_DIR   = Path(__file__).resolve().parent
-LOG_DIR    = BASE_DIR / "logs"
-OUTPUT_DIR = BASE_DIR / "output"        # 輸出報表根目錄
-CONFIG_F   = BASE_DIR / "schedule_config.json"
-RUNLOG_F   = BASE_DIR / "run_log.json"  # 執行歷史記錄
+st.markdown("""
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&family=IBM+Plex+Mono:wght@400;600&display=swap');
 
-LOG_DIR.mkdir(exist_ok=True)
-OUTPUT_DIR.mkdir(exist_ok=True)
+/* ── Reset ── */
+html, body, [class*="css"] {
+    font-family: 'Noto Sans TC', sans-serif !important;
+    background: #0d1117 !important;
+    color: #e6edf3 !important;
+}
+#MainMenu, footer, header { visibility: hidden; }
+section[data-testid="stSidebar"] { display: none !important; }
+[data-testid="collapsedControl"]  { display: none !important; }
 
-PYTHON_BIN = sys.executable or "python3"
+/* ══ 固定頂部 NavBar ══ */
+.topnav {
+    position: fixed;
+    top: 0; left: 0; right: 0;
+    z-index: 99999;
+    background: #161b22;
+    border-bottom: 2px solid #21262d;
+    height: 54px;
+    display: flex;
+    align-items: center;
+    padding: 0 20px;
+    gap: 0;
+    box-shadow: 0 4px 24px rgba(0,0,0,.6);
+}
+.nav-brand {
+    font-size: 16px;
+    font-weight: 900;
+    color: #58a6ff;
+    letter-spacing: .02em;
+    margin-right: 24px;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+.nav-links {
+    display: flex;
+    gap: 2px;
+    flex: 1;
+}
+.nav-link {
+    font-size: 13px;
+    font-weight: 700;
+    color: #8b949e;
+    padding: 7px 16px;
+    border-radius: 6px;
+    white-space: nowrap;
+    cursor: pointer;
+}
+.nav-link.active {
+    background: #1f6feb33;
+    color: #79c0ff;
+}
+.nav-right {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-shrink: 0;
+}
+.region-chip {
+    font-size: 12px;
+    font-weight: 700;
+    background: #1f6feb22;
+    border: 1px solid #1f6feb66;
+    color: #79c0ff;
+    padding: 4px 14px;
+    border-radius: 20px;
+}
+.region-chip.none {
+    background: #21262d;
+    border-color: #30363d;
+    color: #6e7681;
+}
+.nav-time {
+    font-size: 12px;
+    color: #6e7681;
+    font-family: 'IBM Plex Mono', monospace;
+}
+
+/* ══ 實際導覽按鈕（隱形，蓋在 nav 上） ══
+   放在頁面正文頂端，用 margin-top 推到 nav 位置 */
+.nav-real-btns {
+    position: fixed;
+    top: 0; left: 180px;
+    z-index: 100000;
+    display: flex;
+    gap: 2px;
+    height: 54px;
+    align-items: center;
+}
+.nav-real-btns .stButton > button {
+    background: transparent !important;
+    border: none !important;
+    color: transparent !important;
+    width: 110px !important;
+    height: 40px !important;
+    cursor: pointer !important;
+    padding: 0 !important;
+}
+
+/* ══ Body offset ══ */
+.block-container {
+    padding-top: 70px !important;
+    padding-bottom: 3rem;
+    max-width: 1400px;
+}
+
+/* ══ Cards ══ */
+.card {
+    background: #161b22;
+    border: 1px solid #30363d;
+    border-radius: 12px;
+    padding: 20px 24px 18px;
+    margin-bottom: 18px;
+}
+.card-title {
+    font-size: 12px;
+    font-weight: 900;
+    color: #79c0ff;
+    text-transform: uppercase;
+    letter-spacing: .12em;
+    margin-bottom: 16px;
+}
+
+/* ══ Sched Table ══ */
+.sched-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13.5px;
+}
+.sched-table th {
+    background: #1c2128;
+    color: #8b949e;
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .08em;
+    padding: 9px 14px;
+    text-align: left;
+    border-bottom: 1px solid #30363d;
+}
+.sched-table td {
+    padding: 10px 14px;
+    border-bottom: 1px solid #21262d;
+    color: #e6edf3;
+    vertical-align: middle;
+}
+.sched-table tr:last-child td { border-bottom: none; }
+.sched-table tr:hover td { background: #1c2128; }
+.sched-table td.dim { color: #8b949e; }
+.sched-table code {
+    font-family: 'IBM Plex Mono', monospace !important;
+    font-size: 11.5px !important;
+    background: #1c2128 !important;
+    color: #a5d6ff !important;
+    padding: 2px 6px !important;
+    border-radius: 4px !important;
+}
+
+/* ══ Badges ══ */
+.badge {
+    display: inline-block;
+    padding: 3px 10px;
+    border-radius: 20px;
+    font-size: 11px;
+    font-weight: 700;
+    font-family: 'IBM Plex Mono', monospace;
+    white-space: nowrap;
+}
+.badge-ok   { background:#0d4429; color:#56d364; border:1px solid #2ea043; }
+.badge-fail { background:#3d0000; color:#ff7b72; border:1px solid #b62324; }
+.badge-wait { background:#1c2128; color:#8b949e; border:1px solid #30363d; }
+
+/* ══ Buttons ══ */
+.stButton > button {
+    background: #21262d !important;
+    color: #e6edf3 !important;
+    border: 1px solid #30363d !important;
+    border-radius: 8px !important;
+    font-weight: 600 !important;
+    font-size: 13px !important;
+    transition: all .15s ease !important;
+}
+.stButton > button:hover {
+    background: #1f6feb33 !important;
+    color: #79c0ff !important;
+    border-color: #388bfd !important;
+}
+/* 執行按鈕特別樣式 */
+button[kind="secondary"] {
+    font-size: 12px !important;
+    padding: 4px 10px !important;
+}
+
+/* ══ Metrics ══ */
+[data-testid="metric-container"] {
+    background: #161b22 !important;
+    border: 1px solid #30363d !important;
+    border-radius: 10px !important;
+    padding: 16px 20px !important;
+}
+[data-testid="stMetricLabel"] { color: #8b949e !important; font-size: 12px !important; }
+[data-testid="stMetricValue"] { color: #e6edf3 !important; font-size: 24px !important; font-weight: 900 !important; }
+
+/* ══ Selectbox ══ */
+.stSelectbox label { color: #c9d1d9 !important; font-size: 13px !important; font-weight: 600 !important; }
+.stSelectbox > div > div {
+    background: #1c2128 !important;
+    border: 1px solid #30363d !important;
+    border-radius: 8px !important;
+    color: #e6edf3 !important;
+}
+
+/* ══ Text inputs ══ */
+.stTextInput label, .stTextArea label, .stCheckbox label {
+    color: #c9d1d9 !important;
+    font-size: 13px !important;
+}
+.stTextInput input, .stTextArea textarea {
+    background: #1c2128 !important;
+    color: #e6edf3 !important;
+    border: 1px solid #30363d !important;
+    border-radius: 8px !important;
+    font-size: 13px !important;
+}
+
+/* ══ Tabs ══ */
+.stTabs [data-baseweb="tab-list"] {
+    background: transparent !important;
+    border-bottom: 1px solid #30363d !important;
+    gap: 0 !important;
+}
+.stTabs [data-baseweb="tab"] {
+    background: transparent !important;
+    color: #8b949e !important;
+    font-size: 13px !important;
+    font-weight: 700 !important;
+    padding: 8px 20px !important;
+    border-radius: 0 !important;
+}
+.stTabs [aria-selected="true"] {
+    color: #79c0ff !important;
+    border-bottom: 2px solid #388bfd !important;
+}
+
+/* ══ Alert / Info ══ */
+[data-testid="stAlert"] { border-radius: 8px !important; }
+.stAlert p { color: #e6edf3 !important; }
+
+/* ══ Expander ══ */
+details > summary {
+    color: #c9d1d9 !important;
+    font-size: 13px !important;
+    font-weight: 600 !important;
+}
+.streamlit-expanderHeader { color: #c9d1d9 !important; }
+
+/* ══ Caption / small text ══ */
+.stCaption, [data-testid="stCaptionContainer"] { color: #8b949e !important; }
+
+/* ══ Divider ══ */
+hr { border-color: #21262d !important; margin: 10px 0 18px 0 !important; }
+
+/* ══ Code blocks ══ */
+.stCode, [data-testid="stCodeBlock"] {
+    background: #1c2128 !important;
+    border: 1px solid #30363d !important;
+    border-radius: 8px !important;
+}
+</style>
+""", unsafe_allow_html=True)
 
 # ──────────────────────────────────────────────
-# Default schedule config
+# Session state
+# ──────────────────────────────────────────────
+for k, v in {"page": "排程主控表", "region": None, "result_label": None, "result_data": None}.items():
+    if k not in st.session_state:
+        st.session_state[k] = v
+
+# ──────────────────────────────────────────────
+# Config / RunLog
 # ──────────────────────────────────────────────
 DEFAULT_CONFIG = {
     "daily": [
-        {"id": "d1", "label": "排班統計表",   "script": "排班統計表.py",    "args": [],      "schedule": "01:00"},
-        {"id": "d2", "label": "專員班表",     "script": "專員班表.py",      "args": [],      "schedule": "02:00"},
-        {"id": "d3", "label": "專員個資",     "script": "專員系統個資.py",  "args": [],      "schedule": "02:30"},
-        {"id": "d4", "label": "當月次月訂單", "script": "當月次月訂單.py",  "args": [],      "schedule": "08:00"},
-        {"id": "d5", "label": "業績報表 08",  "script": "業績報表.py",      "args": ["0800"],"schedule": "08:00"},
-        {"id": "d6", "label": "業績報表 18",  "script": "業績報表.py",      "args": ["1800"],"schedule": "18:00"},
+        {"id": "d1", "label": "排班統計表",   "script": "排班統計表.py",   "args": [],       "schedule": "01:00", "all_regions": False},
+        {"id": "d2", "label": "專員班表",     "script": "專員班表.py",     "args": [],       "schedule": "02:00", "all_regions": False},
+        {"id": "d3", "label": "專員個資",     "script": "專員系統個資.py", "args": [],       "schedule": "02:30", "all_regions": False},
+        {"id": "d4", "label": "當月次月訂單", "script": "當月次月訂單.py", "args": [],       "schedule": "08:00", "all_regions": True},
+        {"id": "d5", "label": "業績報表 08",  "script": "業績報表.py",     "args": ["0800"], "schedule": "08:00", "all_regions": True},
+        {"id": "d6", "label": "業績報表 18",  "script": "業績報表.py",     "args": ["1800"], "schedule": "18:00", "all_regions": True},
     ],
     "monthly": [
-        {"id": "m1", "label": "上半月訂單",   "script": "上下半月訂單.py",  "args": ["1"],   "schedule": "月初 01 日"},
-        {"id": "m2", "label": "下半月訂單",   "script": "上下半月訂單.py",  "args": ["2"],   "schedule": "月中 16 日"},
-        {"id": "m3", "label": "已退款",       "script": "已退款.py",        "args": [],      "schedule": "月底"},
-        {"id": "m4", "label": "預收",         "script": "預收.py",          "args": [],      "schedule": "月底"},
-        {"id": "m5", "label": "儲值金結算",   "script": "儲值金結算.py",    "args": [],      "schedule": "月底"},
-        {"id": "m6", "label": "儲值金預收",   "script": "儲值金預收.py",    "args": [],      "schedule": "月底"},
+        {"id": "m1", "label": "上半月訂單",  "script": "上下半月訂單.py", "args": ["1"], "schedule": "月初01日", "all_regions": True},
+        {"id": "m2", "label": "下半月訂單",  "script": "上下半月訂單.py", "args": ["2"], "schedule": "月中16日", "all_regions": True},
+        {"id": "m3", "label": "已退款",      "script": "已退款.py",       "args": [],    "schedule": "月底",    "all_regions": True},
+        {"id": "m4", "label": "預收",        "script": "預收.py",         "args": [],    "schedule": "月底",    "all_regions": False},
+        {"id": "m5", "label": "儲值金結算",  "script": "儲值金結算.py",   "args": [],    "schedule": "月底",    "all_regions": False},
+        {"id": "m6", "label": "儲值金預收",  "script": "儲值金預收.py",   "args": [],    "schedule": "月底",    "all_regions": False},
     ],
 }
 
-# ──────────────────────────────────────────────
-# Config helpers
-# ──────────────────────────────────────────────
-def load_config() -> dict:
+def load_config():
     if CONFIG_F.exists():
         try:
             return json.loads(CONFIG_F.read_text(encoding="utf-8"))
@@ -72,13 +357,10 @@ def load_config() -> dict:
             pass
     return DEFAULT_CONFIG.copy()
 
-def save_config(cfg: dict):
+def save_config(cfg):
     CONFIG_F.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
 
-# ──────────────────────────────────────────────
-# Run-log helpers
-# ──────────────────────────────────────────────
-def load_runlog() -> dict:
+def load_runlog():
     if RUNLOG_F.exists():
         try:
             return json.loads(RUNLOG_F.read_text(encoding="utf-8"))
@@ -86,378 +368,325 @@ def load_runlog() -> dict:
             pass
     return {}
 
-def save_runlog(log: dict):
+def save_runlog(log):
     RUNLOG_F.write_text(json.dumps(log, ensure_ascii=False, indent=2), encoding="utf-8")
 
-def record_run(job_id: str, ok: bool, stdout: str, stderr: str):
+def rkey(job_id, region=None):
+    return f"{region}__{job_id}" if region else job_id
+
+def record_run(key, ok, stdout, stderr):
     log = load_runlog()
-    log[job_id] = {
+    log[key] = {
         "last_run": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "ok": ok,
-        "stdout": stdout[-800:] if stdout else "",
-        "stderr": stderr[-800:] if stderr else "",
+        "stdout": (stdout or "")[-1200:],
+        "stderr": (stderr or "")[-1200:],
     }
     save_runlog(log)
 
 # ──────────────────────────────────────────────
 # Script runner
 # ──────────────────────────────────────────────
-def run_script(script_name: str, args=None) -> dict:
+def run_script(script_name, args=None, region=None):
     args = args or []
     path = BASE_DIR / script_name
     if not path.exists():
-        return {"ok": False, "stdout": "", "stderr": f"找不到：{path}", "cmd": ""}
+        return {"ok": False, "stdout": "", "stderr": f"找不到腳本：{path}", "cmd": ""}
+    env = os.environ.copy()
+    if region and region in ACCOUNTS:
+        acct = ACCOUNTS[region]
+        env["REGION_EMAIL"]    = acct.get("email", "")
+        env["REGION_PASSWORD"] = acct.get("password", "")
+        env["REGION_NAME"]     = region
     cmd = [PYTHON_BIN, str(path)] + [str(a) for a in args]
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, cwd=str(BASE_DIR))
+        r = subprocess.run(cmd, capture_output=True, text=True, cwd=str(BASE_DIR), env=env)
         return {"ok": r.returncode == 0, "stdout": r.stdout, "stderr": r.stderr, "cmd": " ".join(cmd)}
     except Exception as e:
         return {"ok": False, "stdout": "", "stderr": str(e), "cmd": " ".join(cmd)}
 
-# ──────────────────────────────────────────────
-# Unique ID generator
-# ──────────────────────────────────────────────
-def new_id(prefix="x") -> str:
-    return f"{prefix}{datetime.now().strftime('%H%M%S%f')[-8:]}"
-
-# ──────────────────────────────────────────────
-# Output file scanner
-# ──────────────────────────────────────────────
-def scan_output_dir() -> list[dict]:
-    """回傳 OUTPUT_DIR 及子目錄中的所有檔案，附帶 mtime / size。"""
+def do_run_job(job, region):
+    """執行 job，支援全區依序。回傳 [(地區, result), ...]。"""
+    REGION_ALL = "【全部地區依序】"
+    targets = list(ACCOUNTS.keys()) if region == REGION_ALL else ([region] if region else [None])
     results = []
-    for p in sorted(OUTPUT_DIR.rglob("*")):
-        if p.is_file():
-            stat = p.stat()
-            results.append({
-                "path": str(p),
-                "name": p.name,
-                "rel":  str(p.relative_to(OUTPUT_DIR)),
-                "folder": str(p.parent.relative_to(OUTPUT_DIR)) if p.parent != OUTPUT_DIR else "（根目錄）",
-                "size_kb": round(stat.st_size / 1024, 1),
-                "mtime": datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M"),
-            })
+    for r in targets:
+        res = run_script(job["script"], job.get("args", []), region=r)
+        record_run(rkey(job["id"], r), res["ok"], res["stdout"], res["stderr"])
+        results.append((r or "—", res))
     return results
 
-# ──────────────────────────────────────────────
-# CSS
-# ──────────────────────────────────────────────
-st.markdown("""
-<style>
-@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;600;800&family=JetBrains+Mono:wght@400;600&display=swap');
+def scan_output():
+    files = []
+    for p in sorted(OUTPUT_DIR.rglob("*")):
+        if p.is_file():
+            s = p.stat()
+            files.append({
+                "name":    p.name,
+                "folder":  str(p.parent.relative_to(OUTPUT_DIR)) if p.parent != OUTPUT_DIR else "根目錄",
+                "size_kb": round(s.st_size / 1024, 1),
+                "mtime":   datetime.fromtimestamp(s.st_mtime).strftime("%Y-%m-%d %H:%M"),
+            })
+    return sorted(files, key=lambda x: x["mtime"], reverse=True)
 
-html, body, [class*="css"] {
-    font-family: 'Noto Sans TC', sans-serif;
-}
-
-/* Background */
-.stApp {
-    background: #0f1117;
-    color: #e8eaf0;
-}
-
-/* Sidebar */
-section[data-testid="stSidebar"] {
-    background: #161b27;
-    border-right: 1px solid #252d3d;
-}
-section[data-testid="stSidebar"] * { color: #c9d1e0 !important; }
-
-/* Block container */
-.block-container {
-    padding-top: 1.2rem;
-    padding-bottom: 2rem;
-    max-width: 1400px;
-}
-
-/* ── Cards ── */
-.card {
-    background: #161b27;
-    border: 1px solid #252d3d;
-    border-radius: 14px;
-    padding: 20px 22px 16px;
-    margin-bottom: 18px;
-}
-.card-title {
-    font-size: 17px;
-    font-weight: 800;
-    margin-bottom: 14px;
-    letter-spacing: .02em;
-    color: #a5b4fc;
-    text-transform: uppercase;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-}
-
-/* ── Page header ── */
-.page-header {
-    display: flex;
-    align-items: baseline;
-    gap: 14px;
-    margin-bottom: 6px;
-}
-.page-title {
-    font-size: 28px;
-    font-weight: 800;
-    color: #e8eaf0;
-    letter-spacing: -.01em;
-}
-.page-sub {
-    color: #6b7280;
-    font-size: 14px;
-}
-
-/* ── Status badges ── */
-.badge {
-    display: inline-block;
-    padding: 2px 9px;
-    border-radius: 20px;
-    font-size: 12px;
-    font-weight: 700;
-    font-family: 'JetBrains Mono', monospace;
-}
-.badge-ok   { background:#14532d; color:#86efac; border:1px solid #166534; }
-.badge-fail { background:#450a0a; color:#fca5a5; border:1px solid #7f1d1d; }
-.badge-wait { background:#1c1917; color:#a8a29e; border:1px solid #292524; }
-
-/* ── Table ── */
-.sched-table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 13.5px;
-}
-.sched-table th {
-    background: #1e2536;
-    color: #a5b4fc;
-    font-weight: 700;
-    padding: 8px 12px;
-    text-align: left;
-    font-size: 12px;
-    text-transform: uppercase;
-    letter-spacing: .06em;
-}
-.sched-table td {
-    padding: 9px 12px;
-    border-bottom: 1px solid #1e2536;
-    color: #d1d5db;
-    vertical-align: middle;
-}
-.sched-table tr:last-child td { border-bottom: none; }
-.sched-table tr:hover td { background: #1a2035; }
-
-/* ── Buttons ── */
-.stButton > button {
-    background: #312e81;
-    color: #c7d2fe;
-    border: 1px solid #3730a3;
-    border-radius: 8px;
-    font-weight: 700;
-    font-size: 13px;
-    padding: 6px 14px;
-    width: 100%;
-    transition: all .15s;
-}
-.stButton > button:hover {
-    background: #4338ca;
-    color: #fff;
-    border-color: #6366f1;
-}
-
-/* ── Text inputs ── */
-.stTextInput input, .stTextArea textarea, .stSelectbox select {
-    background: #1e2536 !important;
-    color: #e8eaf0 !important;
-    border: 1px solid #252d3d !important;
-    border-radius: 8px !important;
-}
-
-/* ── Expander ── */
-details summary {
-    font-size: 13px;
-    color: #6b7280;
-    cursor: pointer;
-}
-
-/* ── Code ── */
-code, .stCode {
-    font-family: 'JetBrains Mono', monospace !important;
-    font-size: 12px;
-}
-
-/* ── Divider ── */
-hr { border-color: #252d3d; }
-</style>
-""", unsafe_allow_html=True)
+def new_id(prefix="x"):
+    return f"{prefix}{datetime.now().strftime('%f')}"
 
 # ──────────────────────────────────────────────
-# Header
+# Load
 # ──────────────────────────────────────────────
+cfg    = load_config()
+runlog = load_runlog()
+REGIONS     = sorted(ACCOUNTS.keys()) if ACCOUNTS else []
+REGION_ALL  = "【全部地區依序】"
+
+# ══════════════════════════════════════════════════════════════
+# 固定頂部 NavBar（HTML 視覺）
+# ══════════════════════════════════════════════════════════════
+PAGES = ["排程主控表", "手動執行", "輸出報表", "腳本管理"]
+cur   = st.session_state.page
+rgn   = st.session_state.region
+
+nav_items = "".join(
+    f'<span class="nav-link{"  active" if p == cur else ""}">{p}</span>'
+    for p in PAGES
+)
+chip_cls  = "region-chip" if rgn and rgn != REGION_ALL else "region-chip none"
+chip_text = f"📍 {rgn}" if rgn else "📍 未選地區"
+
 st.markdown(f"""
-<div class="page-header">
-  <div class="page-title">📊 營運報表控制台</div>
-  <div class="page-sub">專案目錄：{BASE_DIR} &nbsp;｜&nbsp; {datetime.now().strftime('%Y-%m-%d %H:%M')}</div>
+<div class="topnav">
+  <div class="nav-brand">📊 營運報表</div>
+  <div class="nav-links">{nav_items}</div>
+  <div class="nav-right">
+    <span class="{chip_cls}">{chip_text}</span>
+    <span class="nav-time">{datetime.now().strftime('%m/%d %H:%M')}</span>
+  </div>
 </div>
 """, unsafe_allow_html=True)
 
-# ──────────────────────────────────────────────
-# Sidebar navigation
-# ──────────────────────────────────────────────
-with st.sidebar:
-    st.markdown("### 🗂️ 功能選單")
-    page = st.radio(
-        "",
-        ["📋 排程主控表", "▶️ 手動執行", "📁 輸出報表", "⚙️ 腳本管理"],
-        label_visibility="collapsed",
-    )
-    st.markdown("---")
-    st.caption("v2.0 · lemon ops")
+# 實際可點擊的導覽按鈕（固定在頂端，透明蓋在 HTML nav 上）
+with st.container():
+    st.markdown('<div class="nav-real-btns">', unsafe_allow_html=True)
+    nav_cols = st.columns(len(PAGES))
+    for i, p in enumerate(PAGES):
+        with nav_cols[i]:
+            if st.button(p, key=f"nav_{p}"):
+                st.session_state.page = p
+                st.rerun()
+    st.markdown("</div>", unsafe_allow_html=True)
 
-cfg     = load_config()
-runlog  = load_runlog()
+# ══════════════════════════════════════════════════════════════
+# 地區選擇器（每頁頂端）
+# ══════════════════════════════════════════════════════════════
+def region_selector(allow_all=False):
+    if not ACCOUNTS:
+        st.error("⚠️ 找不到 accounts.py，請確認檔案存在於專案目錄，並包含 ACCOUNTS 字典。")
+        return None
+
+    opts = ["（不指定地區）"]
+    if allow_all:
+        opts.append(REGION_ALL)
+    opts += REGIONS
+
+    cur_rgn = st.session_state.region
+    idx     = opts.index(cur_rgn) if cur_rgn in opts else 0
+
+    col_sel, col_info = st.columns([2, 5])
+    with col_sel:
+        sel = st.selectbox("📍 操作地區", opts, index=idx, key="rgn_widget")
+    with col_info:
+        if sel not in ("（不指定地區）", REGION_ALL):
+            if sel in ACCOUNTS:
+                st.info(f"✅ **{sel}** 帳號：`{ACCOUNTS[sel].get('email','—')}`　密碼已遮蔽")
+            else:
+                st.warning(f"⚠️ accounts.py 中找不到「{sel}」的帳密")
+        elif sel == REGION_ALL:
+            st.info(f"🌐 將依序執行所有地區：{', '.join(REGIONS)}")
+        else:
+            st.caption("未指定地區時，腳本不會收到帳密環境變數")
+
+    new_val = None if sel == "（不指定地區）" else sel
+    if new_val != st.session_state.region:
+        st.session_state.region = new_val
+        st.rerun()
+    return new_val
+
+# ══════════════════════════════════════════════════════════════
+# 執行結果顯示區（所有頁面共用）
+# ══════════════════════════════════════════════════════════════
+result_box = st.empty()
+
+def show_run_result(label, pairs):
+    with result_box.container():
+        st.markdown(f"**執行結果：{label}**")
+        for rgn_name, res in pairs:
+            prefix = f"`{rgn_name}` " if rgn_name != "—" else ""
+            if res["ok"]:
+                st.success(f"✅ {prefix}完成")
+            else:
+                st.error(f"❌ {prefix}失敗")
+            if res.get("cmd"):
+                st.code(res["cmd"], language="bash")
+            if res.get("stdout", "").strip():
+                st.code(res["stdout"])
+            if res.get("stderr", "").strip():
+                with st.expander("stderr 錯誤訊息"):
+                    st.code(res["stderr"])
 
 # ══════════════════════════════════════════════════════════════
 # PAGE 1 ── 排程主控表
 # ══════════════════════════════════════════════════════════════
-if page == "📋 排程主控表":
+if st.session_state.page == "排程主控表":
 
-    def sched_table(jobs: list, title: str):
-        st.markdown(f'<div class="card"><div class="card-title">{title}</div>', unsafe_allow_html=True)
-        rows = ""
-        for j in jobs:
-            entry  = runlog.get(j["id"], {})
-            last   = entry.get("last_run", "—")
+    region = region_selector()
+    st.markdown("")
+
+    # 統計
+    all_jobs   = cfg["daily"] + cfg["monthly"]
+    ok_count   = sum(1 for j in all_jobs if (runlog.get(rkey(j["id"], region)) or runlog.get(j["id"], {})).get("ok") is True)
+    fail_count = sum(1 for j in all_jobs if (runlog.get(rkey(j["id"], region)) or runlog.get(j["id"], {})).get("ok") is False)
+    wait_count = len(all_jobs) - ok_count - fail_count
+
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("📋 排程總數", len(all_jobs))
+    m2.metric("✅ 成功",    ok_count)
+    m3.metric("❌ 失敗",    fail_count)
+    m4.metric("⏳ 待執行",  wait_count)
+
+    def render_section(jobs, section_title, group_key):
+        st.markdown(f'<div class="card"><div class="card-title">{section_title}</div></div>', unsafe_allow_html=True)
+
+        # 表頭
+        hcols = st.columns([3, 2, 3, 2, 2, 2, 1])
+        for txt, col in zip(["名稱", "排程時間", "腳本", "參數", "地區範圍", "狀態 / 最後執行", "執行"], hcols):
+            col.markdown(f"<span style='font-size:11px;font-weight:700;color:#8b949e;text-transform:uppercase;letter-spacing:.06em'>{txt}</span>", unsafe_allow_html=True)
+        st.markdown("<hr style='margin:4px 0 0 0'>", unsafe_allow_html=True)
+
+        for idx, job in enumerate(jobs):
+            k      = rkey(job["id"], region)
+            entry  = runlog.get(k) or runlog.get(job["id"], {})
             ok     = entry.get("ok", None)
-            script_exists = (BASE_DIR / j["script"]).exists()
+            last   = entry.get("last_run", "—")
+            exists = (BASE_DIR / job["script"]).exists()
+            multi  = "🌐 全區" if job.get("all_regions") else "單區"
 
             if ok is True:
-                badge = '<span class="badge badge-ok">✓ 成功</span>'
+                badge = '✅ 成功'
+                badge_color = "#56d364"
             elif ok is False:
-                badge = '<span class="badge badge-fail">✗ 失敗</span>'
+                badge = '❌ 失敗'
+                badge_color = "#ff7b72"
             else:
-                badge = '<span class="badge badge-wait">— 尚未執行</span>'
+                badge = '— 待執行'
+                badge_color = "#8b949e"
 
-            args_str = " ".join(j.get("args", [])) or "—"
-            exist_icon = "🟢" if script_exists else "🔴"
+            args_str = " ".join(job.get("args", [])) or "—"
+            e_icon   = "🟢" if exists else "🔴"
 
-            rows += f"""
-            <tr>
-              <td><b>{j['label']}</b></td>
-              <td style="font-family:monospace;color:#a5b4fc">{j['schedule']}</td>
-              <td>{exist_icon} {j['script']}</td>
-              <td style="color:#78716c">{args_str}</td>
-              <td>{badge}</td>
-              <td style="font-family:monospace;font-size:12px;color:#6b7280">{last}</td>
-            </tr>"""
+            row = st.columns([3, 2, 3, 2, 2, 2, 1])
+            row[0].markdown(f"**{job['label']}**")
+            row[1].markdown(f"<span style='color:#c9d1d9;font-size:13px'>{job['schedule']}</span>", unsafe_allow_html=True)
+            row[2].markdown(f"{e_icon} `{job['script']}`")
+            row[3].markdown(f"<span style='color:#c9d1d9'>{args_str}</span>", unsafe_allow_html=True)
+            row[4].markdown(f"<span style='color:#c9d1d9'>{multi}</span>", unsafe_allow_html=True)
+            row[5].markdown(
+                f"<span style='color:{badge_color};font-weight:700;font-size:13px'>{badge}</span>"
+                f"<br><span style='color:#8b949e;font-size:11px;font-family:\"IBM Plex Mono\",monospace'>{last}</span>",
+                unsafe_allow_html=True
+            )
+            with row[6]:
+                if st.button("▶", key=f"dash_run_{group_key}_{job['id']}_{idx}", help=f"執行 {job['label']}"):
+                    with st.spinner(f"執行 {job['label']} …"):
+                        pairs = do_run_job(job, region)
+                    show_run_result(job["label"], pairs)
+                    st.rerun()
 
-        st.markdown(f"""
-        <table class="sched-table">
-          <thead><tr>
-            <th>名稱</th><th>排程時間</th><th>腳本</th><th>參數</th><th>狀態</th><th>最後執行</th>
-          </tr></thead>
-          <tbody>{rows}</tbody>
-        </table>
-        </div>""", unsafe_allow_html=True)
+            st.markdown("<div style='border-bottom:1px solid #21262d;margin:2px 0'></div>", unsafe_allow_html=True)
 
-    sched_table(cfg["daily"],   "📅 每日排程")
-    sched_table(cfg["monthly"], "🗓️ 月排程")
+    render_section(cfg["daily"],   "📅 每日排程", "daily")
+    render_section(cfg["monthly"], "🗓️ 月排程",   "monthly")
 
-    # 上次失敗詳情
-    failures = [(jid, v) for jid, v in runlog.items() if not v.get("ok", True)]
+    # 失敗詳情
+    failures = [
+        (j, runlog.get(rkey(j["id"], region)) or runlog.get(j["id"]))
+        for j in (cfg["daily"] + cfg["monthly"])
+        if (runlog.get(rkey(j["id"], region)) or runlog.get(j["id"], {})).get("ok") is False
+    ]
     if failures:
         st.markdown('<div class="card"><div class="card-title">⚠️ 失敗詳情</div>', unsafe_allow_html=True)
-        for jid, v in failures:
-            label = next(
-                (j["label"] for s in ["daily","monthly"] for j in cfg[s] if j["id"] == jid),
-                jid
-            )
-            with st.expander(f"❌ {label} — {v['last_run']}"):
-                if v["stderr"]:
-                    st.code(v["stderr"], language="bash")
-                if v["stdout"]:
-                    st.code(v["stdout"])
+        for job, entry in failures:
+            with st.expander(f"❌ {job['label']}  ·  {entry.get('last_run','—')}"):
+                if entry.get("stderr"):
+                    st.code(entry["stderr"], language="bash")
+                if entry.get("stdout"):
+                    st.code(entry["stdout"])
         st.markdown("</div>", unsafe_allow_html=True)
 
-    if st.button("🔄 重新整理"):
-        st.rerun()
+    col_r, _ = st.columns([1, 5])
+    with col_r:
+        if st.button("🔄 重新整理"):
+            st.rerun()
 
 
 # ══════════════════════════════════════════════════════════════
 # PAGE 2 ── 手動執行
 # ══════════════════════════════════════════════════════════════
-elif page == "▶️ 手動執行":
+elif st.session_state.page == "手動執行":
 
-    result_area = st.empty()
+    region = region_selector(allow_all=True)
 
-    def run_and_show(job: dict):
+    def run_and_show(job):
         with st.spinner(f"執行 {job['label']} …"):
-            res = run_script(job["script"], job.get("args", []))
-        record_run(job["id"], res["ok"], res["stdout"], res["stderr"])
-        with result_area.container():
-            if res["ok"]:
-                st.success(f"✅ {job['label']} 完成")
-            else:
-                st.error(f"❌ {job['label']} 失敗")
-            st.code(res["cmd"], language="bash")
-            if res["stdout"].strip():
-                st.code(res["stdout"])
-            if res["stderr"].strip():
-                with st.expander("stderr"):
-                    st.code(res["stderr"])
+            pairs = do_run_job(job, region)
+        show_run_result(job["label"], pairs)
 
-    # ── Daily ──
+    # ── 每日 ──
     st.markdown('<div class="card"><div class="card-title">📅 每日報表</div>', unsafe_allow_html=True)
     cols = st.columns(3)
     for i, job in enumerate(cfg["daily"]):
         with cols[i % 3]:
-            if st.button(job["label"], key=f"run_{job['id']}"):
+            if st.button(job["label"], key=f"man_{job['id']}"):
                 run_and_show(job)
     st.markdown("</div>", unsafe_allow_html=True)
 
-    # ── Monthly ──
+    # ── 月報 ──
     st.markdown('<div class="card"><div class="card-title">🗓️ 月報表</div>', unsafe_allow_html=True)
     cols = st.columns(3)
     for i, job in enumerate(cfg["monthly"]):
         with cols[i % 3]:
-            if st.button(job["label"], key=f"run_{job['id']}"):
+            if st.button(job["label"], key=f"man_{job['id']}"):
                 run_and_show(job)
     st.markdown("</div>", unsafe_allow_html=True)
 
-    # ── Batch ──
+    # ── 批次 ──
     st.markdown('<div class="card"><div class="card-title">🚀 批次執行</div>', unsafe_allow_html=True)
     bc1, bc2 = st.columns(2)
 
-    with bc1:
-        if st.button("▶ 執行全部每日報表", key="batch_daily"):
-            summary = []
-            for job in cfg["daily"]:
-                with st.spinner(f"執行 {job['label']} …"):
-                    res = run_script(job["script"], job.get("args", []))
-                record_run(job["id"], res["ok"], res["stdout"], res["stderr"])
-                summary.append((job["label"], res["ok"]))
-            with result_area.container():
-                st.markdown("### 批次執行結果")
-                for label, ok in summary:
-                    if ok:
-                        st.success(f"✅ {label}")
+    def batch(jobs, title):
+        summary = []
+        for job in jobs:
+            with st.spinner(f"執行 {job['label']} …"):
+                pairs = do_run_job(job, region)
+            summary.append((job["label"], pairs))
+        with result_box.container():
+            st.markdown(f"**{title} 結果**")
+            for label, pairs in summary:
+                for rgn_name, res in pairs:
+                    prefix = f"`{rgn_name}` " if rgn_name != "—" else ""
+                    if res["ok"]:
+                        st.success(f"✅ {prefix}{label}")
                     else:
-                        st.error(f"❌ {label}")
+                        st.error(f"❌ {prefix}{label}")
+                        if res.get("stderr"):
+                            st.code(res["stderr"])
 
+    with bc1:
+        if st.button("▶ 全部每日報表", key="batch_d"):
+            batch(cfg["daily"], "每日批次")
     with bc2:
-        if st.button("▶ 執行全部月報表", key="batch_monthly"):
-            summary = []
-            for job in cfg["monthly"]:
-                with st.spinner(f"執行 {job['label']} …"):
-                    res = run_script(job["script"], job.get("args", []))
-                record_run(job["id"], res["ok"], res["stdout"], res["stderr"])
-                summary.append((job["label"], res["ok"]))
-            with result_area.container():
-                st.markdown("### 批次執行結果")
-                for label, ok in summary:
-                    if ok:
-                        st.success(f"✅ {label}")
-                    else:
-                        st.error(f"❌ {label}")
+        if st.button("▶ 全部月報表", key="batch_m"):
+            batch(cfg["monthly"], "月報批次")
 
     st.markdown("</div>", unsafe_allow_html=True)
 
@@ -465,165 +694,138 @@ elif page == "▶️ 手動執行":
 # ══════════════════════════════════════════════════════════════
 # PAGE 3 ── 輸出報表
 # ══════════════════════════════════════════════════════════════
-elif page == "📁 輸出報表":
+elif st.session_state.page == "輸出報表":
 
-    files = scan_output_dir()
+    files   = scan_output()
+    folders = sorted({f["folder"] for f in files})
 
-    # ── Summary metrics ──
     m1, m2, m3 = st.columns(3)
-    m1.metric("📄 輸出檔案總數", len(files))
-    total_kb = sum(f["size_kb"] for f in files)
-    m2.metric("💾 總大小", f"{total_kb:.1f} KB")
-    folders = {f["folder"] for f in files}
-    m3.metric("📂 子資料夾數", len(folders))
+    m1.metric("📄 檔案總數", len(files))
+    m2.metric("💾 總大小", f"{sum(f['size_kb'] for f in files):.1f} KB")
+    m3.metric("📂 資料夾數", len(folders))
 
-    # ── Folder filter ──
     st.markdown('<div class="card"><div class="card-title">📂 輸出目錄瀏覽</div>', unsafe_allow_html=True)
+    st.caption(f"掃描路徑：`{OUTPUT_DIR}`")
 
-    all_folders = sorted({"（全部）"} | folders)
-    sel_folder  = st.selectbox("篩選資料夾", all_folders)
-
-    filtered = files if sel_folder == "（全部）" else [f for f in files if f["folder"] == sel_folder]
+    sel_folder = st.selectbox("篩選資料夾", ["（全部）"] + folders)
+    filtered   = files if sel_folder == "（全部）" else [f for f in files if f["folder"] == sel_folder]
 
     if not filtered:
-        st.info(f"輸出目錄 `{OUTPUT_DIR}` 目前沒有檔案。執行報表後檔案將顯示於此。")
+        st.info("output/ 目錄目前沒有檔案，執行報表後檔案將顯示於此。")
     else:
-        rows = ""
-        for f in sorted(filtered, key=lambda x: x["mtime"], reverse=True):
-            rows += f"""
-            <tr>
-              <td>📄 {f['name']}</td>
-              <td style="color:#6b7280">{f['folder']}</td>
-              <td style="font-family:monospace;font-size:12px">{f['mtime']}</td>
-              <td style="text-align:right;color:#a5b4fc">{f['size_kb']} KB</td>
-            </tr>"""
-
-        st.markdown(f"""
-        <table class="sched-table">
-          <thead><tr>
-            <th>檔名</th><th>資料夾</th><th>修改時間</th><th style="text-align:right">大小</th>
-          </tr></thead>
-          <tbody>{rows}</tbody>
-        </table>""", unsafe_allow_html=True)
+        hcols = st.columns([4, 2, 2, 1])
+        for txt, col in zip(["檔名", "資料夾", "修改時間", "大小"], hcols):
+            col.markdown(f"<span style='font-size:11px;font-weight:700;color:#8b949e;text-transform:uppercase;letter-spacing:.06em'>{txt}</span>", unsafe_allow_html=True)
+        st.markdown("<hr style='margin:4px 0 8px 0'>", unsafe_allow_html=True)
+        for f in filtered:
+            row = st.columns([4, 2, 2, 1])
+            row[0].markdown(f"📄 **{f['name']}**")
+            row[1].markdown(f"<span style='color:#c9d1d9;font-size:13px'>{f['folder']}</span>", unsafe_allow_html=True)
+            row[2].markdown(f"<span style='color:#8b949e;font-family:\"IBM Plex Mono\",monospace;font-size:12px'>{f['mtime']}</span>", unsafe_allow_html=True)
+            row[3].markdown(f"<span style='color:#79c0ff;font-family:\"IBM Plex Mono\",monospace;font-size:12px'>{f['size_kb']} KB</span>", unsafe_allow_html=True)
 
     st.markdown("</div>", unsafe_allow_html=True)
 
-    # ── Output dir path setting ──
-    st.markdown('<div class="card"><div class="card-title">⚙️ 輸出目錄設定</div>', unsafe_allow_html=True)
-    st.code(str(OUTPUT_DIR))
-    st.caption("如需更改輸出目錄，請修改 opapp.py 中的 OUTPUT_DIR 變數。")
-    st.markdown("</div>", unsafe_allow_html=True)
-
-    if st.button("🔄 重新掃描"):
-        st.rerun()
+    col_r, _ = st.columns([1, 5])
+    with col_r:
+        if st.button("🔄 重新掃描"):
+            st.rerun()
 
 
 # ══════════════════════════════════════════════════════════════
 # PAGE 4 ── 腳本管理
 # ══════════════════════════════════════════════════════════════
-elif page == "⚙️ 腳本管理":
+elif st.session_state.page == "腳本管理":
 
-    tab_daily, tab_monthly = st.tabs(["📅 每日排程腳本", "🗓️ 月排程腳本"])
+    tab_d, tab_m, tab_edit = st.tabs(["📅 每日排程腳本", "🗓️ 月排程腳本", "📝 線上編輯腳本"])
 
-    def script_editor(group_key: str, tab):
+    def job_editor(group_key, tab):
         with tab:
             jobs = cfg[group_key]
 
-            # ── Existing jobs ──
             st.markdown('<div class="card"><div class="card-title">現有腳本</div>', unsafe_allow_html=True)
-
             for idx, job in enumerate(jobs):
-                script_exists = (BASE_DIR / job["script"]).exists()
-                exist_label   = "🟢 存在" if script_exists else "🔴 找不到檔案"
-
-                with st.expander(f"{job['label']}  ·  {exist_label}  ·  `{job['script']}`"):
-                    new_label    = st.text_input("顯示名稱",  job["label"],    key=f"lbl_{job['id']}")
-                    new_script   = st.text_input("腳本檔名",  job["script"],   key=f"scr_{job['id']}")
-                    new_args_str = st.text_input("執行參數（空格分隔）", " ".join(job.get("args", [])), key=f"arg_{job['id']}")
-                    new_schedule = st.text_input("排程時間說明",          job["schedule"],   key=f"sch_{job['id']}")
-
+                exists = (BASE_DIR / job["script"]).exists()
+                icon   = "🟢" if exists else "🔴"
+                with st.expander(f"{icon} {job['label']}  ·  `{job['script']}`"):
                     c1, c2 = st.columns(2)
                     with c1:
-                        if st.button("💾 儲存修改", key=f"save_{job['id']}"):
-                            cfg[group_key][idx]["label"]    = new_label
-                            cfg[group_key][idx]["script"]   = new_script
-                            cfg[group_key][idx]["args"]     = new_args_str.split() if new_args_str.strip() else []
-                            cfg[group_key][idx]["schedule"] = new_schedule
+                        new_label  = st.text_input("顯示名稱",           job["label"],                 key=f"lbl_{job['id']}")
+                        new_script = st.text_input("腳本檔名",            job["script"],                key=f"scr_{job['id']}")
+                    with c2:
+                        new_args   = st.text_input("參數（空格分隔）",    " ".join(job.get("args",[])), key=f"arg_{job['id']}")
+                        new_sched  = st.text_input("排程說明",            job.get("schedule",""),       key=f"sch_{job['id']}")
+                    new_multi = st.checkbox("需跑全部地區", value=job.get("all_regions", False), key=f"mul_{job['id']}")
+
+                    a1, a2, a3 = st.columns(3)
+                    with a1:
+                        if st.button("💾 儲存", key=f"save_{job['id']}"):
+                            cfg[group_key][idx].update({
+                                "label": new_label, "script": new_script,
+                                "args": new_args.split() if new_args.strip() else [],
+                                "schedule": new_sched, "all_regions": new_multi,
+                            })
                             save_config(cfg)
                             st.success("已儲存")
                             st.rerun()
-                    with c2:
-                        if st.button("🗑️ 刪除此項目", key=f"del_{job['id']}"):
+                    with a2:
+                        if st.button("▶ 測試執行", key=f"test_{job['id']}"):
+                            with st.spinner("執行中…"):
+                                pairs = do_run_job(job, st.session_state.region)
+                            show_run_result(job["label"], pairs)
+                    with a3:
+                        if st.button("🗑️ 刪除", key=f"del_{job['id']}"):
                             cfg[group_key].pop(idx)
                             save_config(cfg)
                             st.warning(f"已刪除：{job['label']}")
                             st.rerun()
-
-                    # Preview run
-                    if st.button("▶ 測試執行", key=f"test_{job['id']}"):
-                        with st.spinner("執行中…"):
-                            res = run_script(job["script"], job.get("args", []))
-                        record_run(job["id"], res["ok"], res["stdout"], res["stderr"])
-                        if res["ok"]:
-                            st.success("執行成功")
-                        else:
-                            st.error("執行失敗")
-                        st.code(res.get("stderr") or res.get("stdout") or "（無輸出）")
-
             st.markdown("</div>", unsafe_allow_html=True)
 
-            # ── Add new ──
+            # ── 新增 ──
             st.markdown('<div class="card"><div class="card-title">➕ 新增腳本</div>', unsafe_allow_html=True)
-
-            with st.form(key=f"add_form_{group_key}"):
-                a1, a2 = st.columns(2)
-                with a1:
-                    new_label    = st.text_input("顯示名稱",       placeholder="例：新報表")
-                    new_script   = st.text_input("腳本檔名",       placeholder="例：新報表.py")
-                with a2:
-                    new_args_str = st.text_input("執行參數（空格分隔）", placeholder="例：0800")
-                    new_schedule = st.text_input("排程時間說明",   placeholder="例：09:00")
-
-                submitted = st.form_submit_button("➕ 新增")
-                if submitted:
-                    if not new_label or not new_script:
-                        st.error("顯示名稱與腳本檔名為必填")
+            with st.form(key=f"add_{group_key}"):
+                c1, c2 = st.columns(2)
+                with c1:
+                    f_label  = st.text_input("顯示名稱",        placeholder="例：新報表")
+                    f_script = st.text_input("腳本檔名",        placeholder="例：新報表.py")
+                with c2:
+                    f_args   = st.text_input("參數（空格分隔）", placeholder="例：0800")
+                    f_sched  = st.text_input("排程時間說明",     placeholder="例：09:00")
+                f_multi = st.checkbox("需跑全部地區")
+                if st.form_submit_button("➕ 新增"):
+                    if not f_label or not f_script:
+                        st.error("名稱與腳本為必填")
                     else:
-                        prefix = group_key[0]
                         cfg[group_key].append({
-                            "id":       new_id(prefix),
-                            "label":    new_label,
-                            "script":   new_script,
-                            "args":     new_args_str.split() if new_args_str.strip() else [],
-                            "schedule": new_schedule or "—",
+                            "id": new_id(group_key[0]),
+                            "label": f_label, "script": f_script,
+                            "args": f_args.split() if f_args.strip() else [],
+                            "schedule": f_sched or "—",
+                            "all_regions": f_multi,
                         })
                         save_config(cfg)
-                        st.success(f"已新增：{new_label}")
+                        st.success(f"已新增：{f_label}")
                         st.rerun()
-
             st.markdown("</div>", unsafe_allow_html=True)
 
-            # ── Inline script editor ──
-            st.markdown('<div class="card"><div class="card-title">📝 線上編輯腳本內容</div>', unsafe_allow_html=True)
-            all_scripts = sorted({j["script"] for j in cfg[group_key]})
-            sel_script  = st.selectbox("選擇腳本", ["（請選擇）"] + all_scripts, key=f"edit_sel_{group_key}")
+    job_editor("daily",   tab_d)
+    job_editor("monthly", tab_m)
 
-            if sel_script and sel_script != "（請選擇）":
-                spath = BASE_DIR / sel_script
-                existing_code = spath.read_text(encoding="utf-8") if spath.exists() else "# 新檔案\n"
-                edited = st.text_area("腳本內容", existing_code, height=350, key=f"editor_{group_key}")
-                if st.button("💾 寫入腳本", key=f"write_{group_key}"):
-                    spath.write_text(edited, encoding="utf-8")
-                    st.success(f"已儲存 {sel_script}")
+    with tab_edit:
+        st.markdown('<div class="card"><div class="card-title">📝 直接編輯腳本內容</div>', unsafe_allow_html=True)
+        all_scripts = sorted({j["script"] for grp in ["daily","monthly"] for j in cfg[grp]})
+        sel = st.selectbox("選擇腳本", ["（請選擇）"] + all_scripts)
+        if sel and sel != "（請選擇）":
+            spath  = BASE_DIR / sel
+            code   = spath.read_text(encoding="utf-8") if spath.exists() else f"# {sel} 尚未建立\n"
+            edited = st.text_area("腳本內容", code, height=420)
+            if st.button("💾 寫入儲存"):
+                spath.write_text(edited, encoding="utf-8")
+                st.success(f"已寫入 {sel}")
+        st.markdown("</div>", unsafe_allow_html=True)
 
-            st.markdown("</div>", unsafe_allow_html=True)
-
-    script_editor("daily",   tab_daily)
-    script_editor("monthly", tab_monthly)
-
-    # ── Reset to defaults ──
-    with st.expander("⚠️ 重置為預設設定"):
-        if st.button("🔄 重置（會清除所有自訂設定）"):
-            save_config(DEFAULT_CONFIG)
-            st.warning("已重置為預設值，請重新整理頁面。")
-            st.rerun()
+        with st.expander("⚠️ 重置所有排程設定為預設值"):
+            if st.button("🔄 確認重置"):
+                save_config(DEFAULT_CONFIG)
+                st.warning("已重置，請重新整理頁面")
+                st.rerun()
