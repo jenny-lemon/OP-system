@@ -68,6 +68,7 @@ html, body, [class*="css"] {
     color: #e6edf3 !important;
 }
 #MainMenu, footer, header { visibility: hidden; }
+print("DEBUG 排班統計表 main started")
 section[data-testid="stSidebar"] { display: none !important; }
 [data-testid="collapsedControl"]  { display: none !important; }
 
