@@ -15,11 +15,23 @@ from datetime import datetime
 
 import streamlit as st
 
-# ── 帳密從本機 accounts.py 讀取 ────────────────────────────────
-try:
-    from accounts import ACCOUNTS  # type: ignore
-except ImportError:
-    ACCOUNTS = {}
+# ── 帳密從 Streamlit secrets 讀取 ────────────────────────────────
+def load_accounts():
+    try:
+        return {
+            "台北": {
+                "email": st.secrets["accounts"]["taipei"]["email"],
+                "password": st.secrets["accounts"]["taipei"]["password"],
+            },
+            "台中": {
+                "email": st.secrets["accounts"]["taichung"]["email"],
+                "password": st.secrets["accounts"]["taichung"]["password"],
+            },
+        }
+    except Exception:
+        return {}
+
+ACCOUNTS = load_accounts()
 
 # ──────────────────────────────────────────────
 # Paths
@@ -440,6 +452,8 @@ runlog = load_runlog()
 REGIONS     = sorted(ACCOUNTS.keys()) if ACCOUNTS else []
 REGION_ALL  = "【全部地區依序】"
 
+st.caption(f"可用地區：{', '.join(REGIONS) if REGIONS else '尚未讀到帳密'}")
+
 # ══════════════════════════════════════════════════════════════
 # 固定頂部 NavBar（HTML 視覺）
 # ══════════════════════════════════════════════════════════════
@@ -481,7 +495,7 @@ with st.container():
 # ══════════════════════════════════════════════════════════════
 def region_selector(allow_all=False):
     if not ACCOUNTS:
-        st.error("⚠️ 找不到 accounts.py，請確認檔案存在於專案目錄，並包含 ACCOUNTS 字典。")
+        st.error("⚠️ 找不到 Streamlit secrets 帳密，請到 App settings > Secrets 設定 accounts.taipei / accounts.taichung。")
         return None
 
     opts = ["（不指定地區）"]
