@@ -344,7 +344,7 @@ DEFAULT_CONFIG = {
         {"id": "d5", "label": "業績報表",    "script": "performance_report.py", "args": [], "schedule": "08:00", "all_regions": True},
     ],
     "monthly": [
-        {"id": "m1", "label": "上半月訂單",  "script": "上下半月訂單.py", "args": ["1"], "schedule": "月初01日", "all_regions": True},
+        {"id": "m1", "label": "上半月訂單",  "script": "half_month_orders.py", "args": ["1"], "schedule": "月初01日", "all_regions": True},
         {"id": "m2", "label": "下半月訂單",  "script": "上下半月訂單.py", "args": ["2"], "schedule": "月中16日", "all_regions": True},
         {"id": "m3", "label": "已退款",      "script": "已退款.py",       "args": [],    "schedule": "月底",    "all_regions": True},
         {"id": "m4", "label": "預收",        "script": "預收.py",         "args": [],    "schedule": "月底",    "all_regions": False},
