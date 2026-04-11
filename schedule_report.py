@@ -88,17 +88,24 @@ def get_month_strings():
     return this_month, next_month, today_stamp, next_month_stamp
 
 
+import json
+import streamlit as st
+from google.oauth2 import service_account
+from googleapiclient.discovery import build
+
 def get_drive_service():
-    if not os.path.exists(GOOGLE_SERVICE_ACCOUNT_FILE):
-        raise RuntimeError(
-            f"找不到 service account 檔案：{GOOGLE_SERVICE_ACCOUNT_FILE}"
+    try:
+        creds_dict = st.secrets["GOOGLE_SERVICE_ACCOUNT"]
+
+        credentials = service_account.Credentials.from_service_account_info(
+            creds_dict,
+            scopes=["https://www.googleapis.com/auth/drive"]
         )
 
-    creds = service_account.Credentials.from_service_account_file(
-        GOOGLE_SERVICE_ACCOUNT_FILE,
-        scopes=GDRIVE_SCOPES,
-    )
-    return build("drive", "v3", credentials=creds)
+        return build("drive", "v3", credentials=credentials)
+
+    except Exception as e:
+        raise RuntimeError(f"Google Drive 初始化失敗: {e}")
 
 
 def upload_to_gdrive(local_path: str, folder_id: str):
