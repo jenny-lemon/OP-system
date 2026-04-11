@@ -1,7 +1,5 @@
-import os
 import calendar
-from datetime import datetime
-import pytz
+from datetime import datetime, timezone, timedelta
 
 import pandas as pd
 import requests
@@ -10,6 +8,9 @@ from bs4 import BeautifulSoup
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 
+# =========================
+# 基本設定
+# =========================
 LOGIN_URL = "https://backend.lemonclean.com.tw/login"
 PURCHASE_URL = "https://backend.lemonclean.com.tw/purchase"
 
@@ -17,18 +18,19 @@ HEADERS = {"User-Agent": "Mozilla/5.0"}
 
 CITY_ORDER = ["台北", "台中", "桃園", "新竹", "高雄"]
 
-# 👉 台北時區
-tz = pytz.timezone("Asia/Taipei")
+# 👉 台北時區（不用 pytz）
+tz = timezone(timedelta(hours=8))
 
-# 👉 你的 Google Sheet ID
-SHEET_ID = "👉填你的sheet id"
-SHEET_NAME = "業績"
+# 👉 Google Drive 資料夾（放每月報表）
+DRIVE_FOLDER_ID = "👉填你的資料夾ID"
 
-SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
+# 權限
+DRIVE_SCOPES = ["https://www.googleapis.com/auth/drive"]
+SHEET_SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 
 
 # =========================
-# 帳密（多區）
+# 帳密
 # =========================
 def load_accounts():
     mapping = {
@@ -72,14 +74,65 @@ def login(session, email, password):
 
 
 # =========================
-# Google Sheets
+# Google API
 # =========================
-def get_sheet_service():
-    creds = service_account.Credentials.from_service_account_info(
+def get_creds(scopes):
+    return service_account.Credentials.from_service_account_info(
         dict(st.secrets["GOOGLE_SERVICE_ACCOUNT"]),
-        scopes=SCOPES,
+        scopes=scopes,
     )
-    return build("sheets", "v4", credentials=creds)
+
+
+def get_drive():
+    return build("drive", "v3", credentials=get_creds(DRIVE_SCOPES))
+
+
+def get_sheets():
+    return build("sheets", "v4", credentials=get_creds(SHEET_SCOPES))
+
+
+# =========================
+# 每月 Sheet
+# =========================
+def get_month_title():
+    now = datetime.now(tz)
+    return f"業績報表_{now.strftime('%Y-%m')}"
+
+
+def find_sheet(drive, title):
+    q = (
+        f"name='{title}' and "
+        f"mimeType='application/vnd.google-apps.spreadsheet' and "
+        f"'{DRIVE_FOLDER_ID}' in parents and trashed=false"
+    )
+
+    res = drive.files().list(q=q, fields="files(id,name)").execute()
+    files = res.get("files", [])
+    return files[0]["id"] if files else None
+
+
+def create_sheet(drive, title):
+    file = {
+        "name": title,
+        "mimeType": "application/vnd.google-apps.spreadsheet",
+        "parents": [DRIVE_FOLDER_ID],
+    }
+
+    res = drive.files().create(body=file, fields="id,name").execute()
+    print(f"🆕 建立：{title}")
+    return res["id"]
+
+
+def get_or_create_sheet():
+    drive = get_drive()
+    title = get_month_title()
+
+    sid = find_sheet(drive, title)
+    if sid:
+        print(f"📄 使用：{title}")
+        return sid
+
+    return create_sheet(drive, title)
 
 
 # =========================
@@ -104,57 +157,63 @@ def get_ranges():
 
 
 # =========================
-# 建 URL
+# API
 # =========================
-def build_url(start, end, status):
+def build_url(start, end):
     params = {
         "clean_date_s": start,
         "clean_date_e": end,
-        "purchase_status": str(status),
+        "purchase_status": "1",
     }
     return requests.Request("GET", PURCHASE_URL, params=params).prepare().url
 
 
-# =========================
-# 解析（簡化版）
-# =========================
-def parse_html(html):
+def parse_total(html):
     soup = BeautifulSoup(html, "html.parser")
-    tables = soup.find_all("table")
-
     total = 0
 
-    for table in tables:
-        rows = table.find_all("tr")
-        for r in rows:
-            cols = [c.get_text(strip=True) for c in r.find_all("td")]
-            if len(cols) >= 3:
-                try:
-                    val = int(cols[-1].replace(",", ""))
-                    total += val
-                except:
-                    pass
+    for td in soup.find_all("td"):
+        try:
+            total += int(td.text.replace(",", ""))
+        except:
+            pass
 
     return total
 
 
 # =========================
-# 寫入 Sheet
+# Sheet寫入
 # =========================
-def write_to_sheet(data_rows):
-    service = get_sheet_service()
+def ensure_tab(service, sid, name):
+    meta = service.spreadsheets().get(spreadsheetId=sid).execute()
+    tabs = [s["properties"]["title"] for s in meta["sheets"]]
 
-    body = {"values": data_rows}
+    if name in tabs:
+        return
 
-    service.spreadsheets().values().append(
-        spreadsheetId=SHEET_ID,
-        range=f"{SHEET_NAME}!A:H",
-        valueInputOption="USER_ENTERED",
-        insertDataOption="INSERT_ROWS",
-        body=body,
+    service.spreadsheets().batchUpdate(
+        spreadsheetId=sid,
+        body={"requests": [{"addSheet": {"properties": {"title": name}}}]},
     ).execute()
 
-    print("📊 已寫入 Google Sheet")
+
+def write_sheet(rows):
+    sid = get_or_create_sheet()
+    service = get_sheets()
+
+    now = datetime.now(tz)
+    tab = now.strftime("%m-%d_%H%M")
+
+    ensure_tab(service, sid, tab)
+
+    service.spreadsheets().values().update(
+        spreadsheetId=sid,
+        range=f"{tab}!A1",
+        valueInputOption="USER_ENTERED",
+        body={"values": rows},
+    ).execute()
+
+    print(f"📊 已寫入：{tab}")
 
 
 # =========================
@@ -164,13 +223,13 @@ def main():
     print("🔥 業績報表（Sheet版）")
 
     now = datetime.now(tz)
-    date_str = now.strftime("%Y-%m-%d")
-    time_str = now.strftime("%H:%M")
+    date = now.strftime("%Y-%m-%d")
+    time = now.strftime("%H:%M")
 
     (m_start, m_end), (n_start, n_end) = get_ranges()
 
     accounts = load_accounts()
-    results = []
+    result = []
 
     for city in CITY_ORDER:
         print(f"\n=== {city} ===")
@@ -181,29 +240,22 @@ def main():
         try:
             login(session, acc["email"], acc["password"])
 
-            # 本月
-            url1 = build_url(m_start, m_end, 1)
-            res1 = session.get(url1, headers=HEADERS)
-            bm = parse_html(res1.text)
+            bm = parse_total(session.get(build_url(m_start, m_end)).text)
+            nm = parse_total(session.get(build_url(n_start, n_end)).text)
 
-            # 次月
-            url2 = build_url(n_start, n_end, 1)
-            res2 = session.get(url2, headers=HEADERS)
-            nm = parse_html(res2.text)
-
-            results.append([date_str, time_str, city, bm, nm])
+            result.append([date, time, city, bm, nm])
 
         except Exception as e:
-            print(f"❌ {city} 失敗：{e}")
+            print(f"❌ {city}：{e}")
 
-    df = pd.DataFrame(results, columns=["日期", "時間", "城市", "本月", "次月"])
+    df = pd.DataFrame(result, columns=["日期", "時間", "城市", "本月", "次月"])
 
     total = df["本月"].sum()
     df["佔比"] = df["本月"] / total if total else 0
 
-    rows = df.values.tolist()
+    rows = [df.columns.tolist()] + df.values.tolist()
 
-    write_to_sheet(rows)
+    write_sheet(rows)
 
     print("✅ 完成")
 
