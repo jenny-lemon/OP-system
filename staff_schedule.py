@@ -1,7 +1,13 @@
 import os
+import tempfile
 from datetime import datetime
+
 import requests
+import streamlit as st
 from bs4 import BeautifulSoup
+from google.oauth2 import service_account
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaFileUpload
 
 LOGIN_URL = "https://backend.lemonclean.com.tw/login"
 EXPORT_BASE = "https://backend.lemonclean.com.tw/cleaner1/export_all"
@@ -11,19 +17,25 @@ HEADERS = {
     "Content-Type": "application/x-www-form-urlencoded",
 }
 
-# 👉 改這：直接寫或之後拉 config
 API_LIMIT = 10000
 
+# Google Drive
+GDRIVE_FOLDER_ID = "10__ajnbpu2oabAVUG_u3RAHK2a2vcgj2"
+GDRIVE_SCOPES = ["https://www.googleapis.com/auth/drive"]
 
-def get_account():
-    region = os.getenv("REGION_NAME")
-    email = os.getenv("REGION_EMAIL")
-    password = os.getenv("REGION_PASSWORD")
 
-    if not region:
-        raise RuntimeError("未指定地區")
+def get_selected_region_account():
+    region_name = os.getenv("REGION_NAME", "").strip()
+    region_email = os.getenv("REGION_EMAIL", "").strip()
+    region_password = os.getenv("REGION_PASSWORD", "").strip()
 
-    return region, email, password
+    if not region_name:
+        raise RuntimeError("未指定地區，請先在介面選擇台北或台中")
+
+    if not region_email or not region_password:
+        raise RuntimeError(f"{region_name} 找不到帳密，請檢查 Streamlit secrets 或地區設定")
+
+    return region_name, region_email, region_password
 
 
 def login(session, email, password):
@@ -42,7 +54,12 @@ def login(session, email, password):
         "password": password,
     }
 
-    login_res = session.post(LOGIN_URL, data=payload, headers=HEADERS, allow_redirects=True)
+    login_res = session.post(
+        LOGIN_URL,
+        data=payload,
+        headers=HEADERS,
+        allow_redirects=True,
+    )
 
     if "login" in login_res.url.lower():
         raise RuntimeError(f"{email} 登入失敗")
@@ -69,10 +86,44 @@ def get_months():
     return this_month, next_month, this_file_date, next_file_date
 
 
-def export_cleaner_schedule(session, month, city, filename):
-    save_dir = "output/cleaner_schedule"
-    os.makedirs(save_dir, exist_ok=True)
+def get_drive_service():
+    try:
+        creds_dict = dict(st.secrets["GOOGLE_SERVICE_ACCOUNT"])
 
+        creds = service_account.Credentials.from_service_account_info(
+            creds_dict,
+            scopes=GDRIVE_SCOPES,
+        )
+
+        return build("drive", "v3", credentials=creds)
+
+    except Exception as e:
+        raise RuntimeError(f"Google Drive 初始化失敗：{e}")
+
+
+def upload_to_gdrive(local_path):
+    service = get_drive_service()
+    filename = os.path.basename(local_path)
+
+    file_metadata = {
+        "name": filename,
+        "parents": [GDRIVE_FOLDER_ID],
+    }
+
+    media = MediaFileUpload(local_path, resumable=True)
+
+    created = service.files().create(
+        body=file_metadata,
+        media_body=media,
+        fields="id,name",
+        supportsAllDrives=True,
+    ).execute()
+
+    print(f"☁️ 已上傳：{created['name']}")
+    return created["id"]
+
+
+def export_cleaner_schedule(session, month, city, filename):
     url = f"{EXPORT_BASE}?month={month}&limit={API_LIMIT}"
     res = session.get(url, headers=HEADERS, allow_redirects=True)
 
@@ -83,22 +134,25 @@ def export_cleaner_schedule(session, month, city, filename):
     if "excel" not in content_type.lower() and "octet-stream" not in content_type.lower():
         raise RuntimeError(f"{city} 回傳不是 Excel，Content-Type={content_type}")
 
-    full_path = os.path.join(save_dir, filename)
+    with tempfile.TemporaryDirectory() as tmpdir:
+        full_path = os.path.join(tmpdir, filename)
 
-    with open(full_path, "wb") as f:
-        f.write(res.content)
+        with open(full_path, "wb") as f:
+            f.write(res.content)
 
-    print(f"✅ 已下載：{full_path}")
+        print(f"✅ 已下載到暫存：{full_path}")
+        print(f"📦 檔案大小：{os.path.getsize(full_path)} bytes")
+
+        upload_to_gdrive(full_path)
 
 
 def main():
-    city, email, password = get_account()
-
+    city, email, password = get_selected_region_account()
     this_month, next_month, this_date, next_date = get_months()
 
     session = requests.Session()
 
-    print(f"\n=== {city} ===")
+    print(f"\n=== 處理 {city} ===")
 
     try:
         login(session, email, password)
@@ -109,7 +163,7 @@ def main():
         export_cleaner_schedule(session, this_month, city, current_filename)
         export_cleaner_schedule(session, next_month, city, next_filename)
 
-        print(f"✅ {city} 完成")
+        print(f"✅ {city} 全部完成")
 
     except Exception as e:
         print(f"❌ {city} 失敗：{e}")
