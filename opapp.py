@@ -571,14 +571,15 @@ def show_run_result(label, pairs):
                 st.success(f"✅ {prefix}完成")
             else:
                 st.error(f"❌ {prefix}失敗")
-            if res.get("cmd"):
-                st.code(res["cmd"], language="bash")
-            if res.get("stdout", "").strip():
-                st.code(res["stdout"])
-            if res.get("stderr", "").strip():
-                with st.expander("stderr 錯誤訊息"):
-                    st.code(res["stderr"])
 
+            st.write("cmd:")
+            st.code(res.get("cmd", ""), language="bash")
+
+            st.write("stdout:")
+            st.code(res.get("stdout", "") or "(empty)")
+
+            st.write("stderr:")
+            st.code(res.get("stderr", "") or "(empty)")
 # ══════════════════════════════════════════════════════════════
 # PAGE 1 ── 排程主控表
 # ══════════════════════════════════════════════════════════════
