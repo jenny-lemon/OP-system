@@ -404,17 +404,30 @@ def run_script(script, args=None, region=None):
     if args is None:
         args = []
 
-    cmd = [sys.executable, script] + args
+    path = BASE_DIR / script
+    env = os.environ.copy()
+
+    if region and region in ACCOUNTS:
+        acct = ACCOUNTS[region]
+        env["REGION_NAME"] = region
+        env["REGION_EMAIL"] = acct.get("email", "")
+        env["REGION_PASSWORD"] = acct.get("password", "")
+
+    cmd = [sys.executable, str(path)] + args
 
     print("🚀 RUN:", cmd)
     print("🌏 REGION:", region)
+    print("ENV REGION_NAME:", env.get("REGION_NAME"))
+    print("ENV REGION_EMAIL:", env.get("REGION_EMAIL"))
 
     try:
         result = subprocess.run(
             cmd,
             capture_output=True,
             text=True,
-            timeout=300
+            timeout=300,
+            cwd=str(BASE_DIR),
+            env=env,
         )
 
         return {
