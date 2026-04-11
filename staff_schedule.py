@@ -3,9 +3,6 @@ from datetime import datetime
 import requests
 from bs4 import BeautifulSoup
 
-from accounts import ACCOUNTS
-from paths import PATH_CLEANER_SCHEDULE, API_LIMIT
-
 LOGIN_URL = "https://backend.lemonclean.com.tw/login"
 EXPORT_BASE = "https://backend.lemonclean.com.tw/cleaner1/export_all"
 
@@ -13,6 +10,20 @@ HEADERS = {
     "User-Agent": "Mozilla/5.0",
     "Content-Type": "application/x-www-form-urlencoded",
 }
+
+# 👉 改這：直接寫或之後拉 config
+API_LIMIT = 10000
+
+
+def get_account():
+    region = os.getenv("REGION_NAME")
+    email = os.getenv("REGION_EMAIL")
+    password = os.getenv("REGION_PASSWORD")
+
+    if not region:
+        raise RuntimeError("未指定地區")
+
+    return region, email, password
 
 
 def login(session, email, password):
@@ -59,7 +70,7 @@ def get_months():
 
 
 def export_cleaner_schedule(session, month, city, filename):
-    save_dir = PATH_CLEANER_SCHEDULE
+    save_dir = "output/cleaner_schedule"
     os.makedirs(save_dir, exist_ok=True)
 
     url = f"{EXPORT_BASE}?month={month}&limit={API_LIMIT}"
@@ -79,25 +90,30 @@ def export_cleaner_schedule(session, month, city, filename):
 
     print(f"✅ 已下載：{full_path}")
 
+
 def main():
+    city, email, password = get_account()
+
     this_month, next_month, this_date, next_date = get_months()
 
-    for city in ["台北", "台中"]:
-        acc = ACCOUNTS[city]
-        session = requests.Session()
+    session = requests.Session()
 
-        try:
-            print(f"\n=== {city} ===")
-            login(session, acc["email"], acc["password"])
+    print(f"\n=== {city} ===")
 
-            current_filename = f"{this_date}專員班表-{city}.xls"
-            next_filename = f"{next_date}專員班表-{city}.xls"
+    try:
+        login(session, email, password)
 
-            export_cleaner_schedule(session, this_month, city, current_filename)
-            export_cleaner_schedule(session, next_month, city, next_filename)
+        current_filename = f"{this_date}專員班表-{city}.xls"
+        next_filename = f"{next_date}專員班表-{city}.xls"
 
-        except Exception as e:
-            print(f"❌ {city} 失敗：{e}")
+        export_cleaner_schedule(session, this_month, city, current_filename)
+        export_cleaner_schedule(session, next_month, city, next_filename)
+
+        print(f"✅ {city} 完成")
+
+    except Exception as e:
+        print(f"❌ {city} 失敗：{e}")
+        raise
 
 
 if __name__ == "__main__":
