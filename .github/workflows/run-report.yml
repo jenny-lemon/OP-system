@@ -1,0 +1,34 @@
+name: Run Reports
+
+on:
+  workflow_dispatch:   # 手動跑
+  schedule:
+    - cron: "0 1 * * *"   # 你原本時間
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.10"
+
+      # 👇 這段就是安裝套件（重點🔥）
+      - name: Install dependencies
+        run: |
+          pip install requests beautifulsoup4 pandas openpyxl
+          pip install google-api-python-client google-auth google-auth-httplib2 google-auth-oauthlib
+
+      # 👇 把你的金鑰寫成檔案
+      - name: Setup Google credentials
+        run: |
+          echo '${{ secrets.GCP_KEY }}' > google_service_account.json
+
+      # 👇 執行你的 script
+      - name: Run 排班統計表
+        run: python 排班統計表.py
