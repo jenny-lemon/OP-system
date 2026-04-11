@@ -399,24 +399,27 @@ def record_run(key, ok, stdout, stderr):
 # ──────────────────────────────────────────────
 # Script runner
 # ──────────────────────────────────────────────
-def run_script(script_name, args=None, region=None):
-    args = args or []
-    path = BASE_DIR / script_name
-    if not path.exists():
-        return {"ok": False, "stdout": "", "stderr": f"找不到腳本：{path}", "cmd": ""}
-    env = os.environ.copy()
-    if region and region in ACCOUNTS:
-        acct = ACCOUNTS[region]
-        env["REGION_EMAIL"]    = acct.get("email", "")
-        env["REGION_PASSWORD"] = acct.get("password", "")
-        env["REGION_NAME"]     = region
-    cmd = [PYTHON_BIN, str(path)] + [str(a) for a in args]
-    try:
-        r = subprocess.run(cmd, capture_output=True, text=True, cwd=str(BASE_DIR), env=env)
-        return {"ok": r.returncode == 0, "stdout": r.stdout, "stderr": r.stderr, "cmd": " ".join(cmd)}
-    except Exception as e:
-        return {"ok": False, "stdout": "", "stderr": str(e), "cmd": " ".join(cmd)}
+import subprocess
 
+def run_script(script_path, env=None):
+    result = subprocess.run(
+        ["python", script_path],
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+    print("===== STDOUT =====")
+    print(result.stdout)
+
+    print("===== STDERR =====")
+    print(result.stderr)
+
+    if result.returncode != 0:
+        raise RuntimeError(result.stderr or "腳本執行失敗")
+
+    return result.stdout
+    
 def do_run_job(job, region):
     """執行 job，支援全區依序。回傳 [(地區, result), ...]。"""
     REGION_ALL = "【全部地區依序】"
