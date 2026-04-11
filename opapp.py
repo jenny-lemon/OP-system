@@ -401,52 +401,38 @@ def record_run(key, ok, stdout, stderr):
 # Script runner
 # ──────────────────────────────────────────────
 import subprocess
+import sys
 
-def run_script(script_name, args=None, region=None):
-    print("DEBUG NEW run_script loaded")
-    import subprocess
+def run_script(script, args=None, region=None):
+    if args is None:
+        args = []
 
-    args = args or []
-    path = BASE_DIR / script_name
+    cmd = [sys.executable, script] + args
 
-    if not path.exists():
-        return {
-            "ok": False,
-            "stdout": "",
-            "stderr": f"找不到腳本：{path}",
-            "cmd": "",
-        }
-
-    env = os.environ.copy()
-
-    if region and region in ACCOUNTS:
-        acct = ACCOUNTS[region]
-        env["REGION_EMAIL"] = acct.get("email", "")
-        env["REGION_PASSWORD"] = acct.get("password", "")
-        env["REGION_NAME"] = region
-
-    cmd = [PYTHON_BIN, str(path)] + [str(a) for a in args]
+    print("🚀 RUN:", cmd)
+    print("🌏 REGION:", region)
 
     try:
-        r = subprocess.run(
+        result = subprocess.run(
             cmd,
             capture_output=True,
             text=True,
-            cwd=str(BASE_DIR),
-            env=env,
+            timeout=300
         )
+
         return {
-            "ok": r.returncode == 0,
-            "stdout": r.stdout or "",
-            "stderr": r.stderr or "",
+            "ok": result.returncode == 0,
             "cmd": " ".join(cmd),
+            "stdout": result.stdout,
+            "stderr": result.stderr,
         }
+
     except Exception as e:
         return {
             "ok": False,
+            "cmd": " ".join(cmd),
             "stdout": "",
             "stderr": str(e),
-            "cmd": " ".join(cmd),
         }
     
 def do_run_job(job, region):
