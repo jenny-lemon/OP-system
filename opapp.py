@@ -402,6 +402,7 @@ def record_run(key, ok, stdout, stderr):
 import subprocess
 
 def run_script(script_name, args=None, region=None):
+    print("DEBUG NEW run_script loaded")
     import subprocess
 
     args = args or []
