@@ -1,12 +1,10 @@
 """
-opapp.py  ──  營運報表控制台 v5
-改版重點：
-  - 重構 NavBar（不再用透明疊層，改用原生 session_state 按鈕）
-  - 新增 Log 監控頁（多 log 切換、語法高亮）
-  - 主控表加入 KPI 卡 + 批次勾選執行
-  - 輸出檔今日完成狀態追蹤
-  - 下次執行時間預估
-  - 帳密從 Streamlit secrets 讀取
+opapp.py  ──  營運報表控制台 v5.1
+改版：
+  - 配色改為舒適中灰底，文字對比全面提升
+  - 時區改為台灣台北時區 (Asia/Taipei)
+  - 每日排程新增「業績報表」
+  - NavBar 重構，不再疊透明層
 """
 
 import json
@@ -15,8 +13,14 @@ import subprocess
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import streamlit as st
+
+TZ = ZoneInfo("Asia/Taipei")
+
+def now_tw():
+    return datetime.now(TZ)
 
 # ══════════════════════════════════════════════════
 # 帳密從 Streamlit secrets 讀取
@@ -50,10 +54,8 @@ RUNLOG_F   = BASE_DIR / "run_log.json"
 OUTPUT_DIR.mkdir(exist_ok=True)
 LOG_DIR.mkdir(exist_ok=True)
 
-PYTHON_BIN = sys.executable or "python3"
-
 # ══════════════════════════════════════════════════
-# Page config（必須在所有 st 呼叫之前）
+# Page config
 # ══════════════════════════════════════════════════
 st.set_page_config(
     page_title="營運報表控制台",
@@ -63,23 +65,22 @@ st.set_page_config(
 )
 
 # ══════════════════════════════════════════════════
-# CSS
+# CSS  ── 中灰底、高對比文字
 # ══════════════════════════════════════════════════
 st.markdown("""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Mono:wght@400;500&family=Noto+Sans+TC:wght@400;500;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=DM+Mono:wght@400;500&family=Noto+Sans+TC:wght@400;500;700&display=swap');
 
 /* ── Base ── */
 html, body, [class*="css"] {
     font-family: 'Noto Sans TC', sans-serif !important;
-    background: #080c14 !important;
-    color: #dde4f0 !important;
+    background: #1c2333 !important;
+    color: #d4dce8 !important;
 }
 #MainMenu, footer, header { visibility: hidden; }
 section[data-testid="stSidebar"],
 [data-testid="collapsedControl"] { display: none !important; }
 
-/* ── Layout ── */
 .block-container {
     padding-top: 0 !important;
     padding-bottom: 3rem;
@@ -88,86 +89,101 @@ section[data-testid="stSidebar"],
 
 /* ── Top strip ── */
 .topstrip {
-    background: linear-gradient(135deg, #0d1525 0%, #111827 100%);
-    border-bottom: 1px solid #1e2d45;
+    background: #141b27;
+    border-bottom: 1px solid #2a3650;
     padding: 0 28px;
     margin: 0 -1rem 0;
     display: flex;
     align-items: center;
-    height: 56px;
-    gap: 0;
+    height: 54px;
     position: sticky;
     top: 0;
     z-index: 9999;
-    box-shadow: 0 4px 24px rgba(0,0,0,.5);
+    box-shadow: 0 2px 16px rgba(0,0,0,.35);
 }
 .topstrip-brand {
     font-family: 'Syne', sans-serif;
     font-size: 15px;
     font-weight: 800;
-    color: #60a5fa;
-    letter-spacing: -.01em;
-    margin-right: 28px;
+    color: #7db8f7;
+    margin-right: 20px;
     white-space: nowrap;
     flex-shrink: 0;
 }
 .topstrip-time {
     margin-left: auto;
     font-family: 'DM Mono', monospace;
-    font-size: 12px;
-    color: #3d5069;
+    font-size: 12.5px;
+    color: #6b7fa0;
     flex-shrink: 0;
 }
+.rgn-chip {
+    font-family: 'DM Mono', monospace;
+    font-size: 11px;
+    background: rgba(125,184,247,.1);
+    border: 1px solid rgba(125,184,247,.25);
+    color: #7db8f7;
+    padding: 3px 12px;
+    border-radius: 20px;
+    margin-left: 8px;
+}
+.rgn-chip.none {
+    background: rgba(100,116,139,.1);
+    border-color: rgba(100,116,139,.25);
+    color: #6b7fa0;
+}
 
-/* ── Nav bar row (Streamlit columns) ── */
+/* ── Nav bar ── */
 div[data-testid="stHorizontalBlock"]:has(div.nav-wrap) {
-    background: #0d1525 !important;
-    border-bottom: 1px solid #1e2d45 !important;
-    padding: 0 12px !important;
+    background: #141b27 !important;
+    border-bottom: 1px solid #2a3650 !important;
+    padding: 0 16px !important;
     margin: 0 -1rem 28px !important;
     gap: 0 !important;
 }
 .nav-wrap div[data-testid="stButton"] > button {
     height: 44px !important;
-    padding: 0 18px !important;
+    padding: 0 20px !important;
     background: transparent !important;
     border: none !important;
     border-bottom: 2px solid transparent !important;
     border-radius: 0 !important;
-    color: #4a6080 !important;
+    color: #5a7090 !important;
     font-family: 'Syne', sans-serif !important;
     font-weight: 700 !important;
-    font-size: 12.5px !important;
-    letter-spacing: .04em !important;
+    font-size: 13px !important;
     box-shadow: none !important;
     transition: color .15s, border-color .15s !important;
 }
 .nav-wrap div[data-testid="stButton"] > button:hover {
-    color: #93c5fd !important;
-    border-bottom-color: #3b82f6 !important;
+    color: #a8c8f0 !important;
+    border-bottom-color: #4a90d9 !important;
 }
 .nav-wrap.active div[data-testid="stButton"] > button {
-    color: #93c5fd !important;
-    border-bottom-color: #3b82f6 !important;
+    color: #7db8f7 !important;
+    border-bottom-color: #4a8fd4 !important;
 }
 
 /* ── KPI Cards ── */
-.kpi-row { display: flex; gap: 14px; margin-bottom: 24px; }
-.kpi { flex:1; background:#0d1525; border:1px solid #1e2d45; border-radius:14px; padding:18px 22px; position:relative; overflow:hidden; }
+.kpi-row { display:flex; gap:14px; margin-bottom:24px; }
+.kpi {
+    flex:1; background:#222d42; border:1px solid #2e3f5c;
+    border-radius:14px; padding:20px 24px; position:relative; overflow:hidden;
+}
 .kpi::before { content:''; position:absolute; top:0; left:0; right:0; height:3px; }
-.kpi.blue::before  { background: linear-gradient(90deg,#1d4ed8,#60a5fa); }
-.kpi.green::before { background: linear-gradient(90deg,#065f46,#34d399); }
-.kpi.red::before   { background: linear-gradient(90deg,#991b1b,#f87171); }
-.kpi.amber::before { background: linear-gradient(90deg,#92400e,#fbbf24); }
-.kpi-label { font-family:'DM Mono',monospace; font-size:10.5px; font-weight:500; letter-spacing:.12em; text-transform:uppercase; color:#3d5069; margin-bottom:8px; }
-.kpi-value { font-family:'Syne',sans-serif; font-size:32px; font-weight:800; color:#dde4f0; line-height:1; }
-.kpi-sub   { font-size:11.5px; color:#3d5069; margin-top:4px; }
+.kpi.blue::before  { background: linear-gradient(90deg,#2563eb,#7db8f7); }
+.kpi.green::before { background: linear-gradient(90deg,#059669,#34d399); }
+.kpi.red::before   { background: linear-gradient(90deg,#b91c1c,#f87171); }
+.kpi.amber::before { background: linear-gradient(90deg,#b45309,#fbbf24); }
+.kpi-label { font-family:'DM Mono',monospace; font-size:10.5px; font-weight:500; letter-spacing:.12em; text-transform:uppercase; color:#5a7090; margin-bottom:8px; }
+.kpi-value { font-family:'Syne',sans-serif; font-size:34px; font-weight:800; color:#e2eaf6; line-height:1; }
+.kpi-sub   { font-size:12px; color:#6b7fa0; margin-top:5px; }
 
 /* ── Panel ── */
 .panel {
-    background: #0d1525;
-    border: 1px solid #1e2d45;
-    border-radius: 16px;
+    background: #222d42;
+    border: 1px solid #2e3f5c;
+    border-radius: 14px;
     padding: 22px 24px 20px;
     margin-bottom: 20px;
 }
@@ -177,7 +193,7 @@ div[data-testid="stHorizontalBlock"]:has(div.nav-wrap) {
     gap: 10px;
     margin-bottom: 18px;
     padding-bottom: 14px;
-    border-bottom: 1px solid #1e2d45;
+    border-bottom: 1px solid #2a3650;
 }
 .panel-tag {
     font-family: 'DM Mono', monospace;
@@ -185,138 +201,85 @@ div[data-testid="stHorizontalBlock"]:has(div.nav-wrap) {
     font-weight: 500;
     letter-spacing: .14em;
     text-transform: uppercase;
-    color: #60a5fa;
-    background: rgba(96,165,250,.08);
-    border: 1px solid rgba(96,165,250,.2);
+    color: #7db8f7;
+    background: rgba(125,184,247,.1);
+    border: 1px solid rgba(125,184,247,.22);
     border-radius: 6px;
-    padding: 4px 11px;
+    padding: 4px 12px;
 }
-.panel-note { font-size: 12px; color: #3d5069; margin-left: auto; }
+.panel-note { font-size: 12px; color: #5a7090; margin-left: auto; }
 
 /* ── Page titles ── */
 .pg-title {
     font-family: 'Syne', sans-serif;
     font-size: 24px;
     font-weight: 800;
-    color: #dde4f0;
+    color: #e2eaf6;
     margin-bottom: 2px;
-    letter-spacing: -.02em;
+    letter-spacing: -.01em;
 }
 .pg-sub {
     font-family: 'DM Mono', monospace;
     font-size: 11px;
-    color: #2a3d55;
-    letter-spacing: .12em;
+    color: #3a4f6a;
+    letter-spacing: .14em;
     margin-bottom: 24px;
 }
 
-/* ── Task rows ── */
-.task-hdr {
-    display: flex;
-    align-items: center;
-    padding: 6px 14px;
-    color: #2a3d55;
-    font-family: 'DM Mono', monospace;
-    font-size: 10.5px;
-    font-weight: 500;
-    letter-spacing: .1em;
-    text-transform: uppercase;
-    margin-bottom: 6px;
-}
-.task-row {
-    display: flex;
-    align-items: center;
-    padding: 12px 14px;
-    background: #080c14;
-    border: 1px solid #1a2535;
-    border-radius: 10px;
-    margin-bottom: 6px;
-    transition: border-color .15s;
-}
-.task-row:hover { border-color: #2d4a6a; }
-
 /* ── Badges ── */
 .badge {
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    font-family: 'DM Mono', monospace;
-    font-size: 11px;
-    font-weight: 500;
-    padding: 3px 10px;
-    border-radius: 20px;
-    white-space: nowrap;
+    display: inline-flex; align-items: center; gap: 5px;
+    font-family: 'DM Mono', monospace; font-size: 11.5px; font-weight: 500;
+    padding: 3px 11px; border-radius: 20px; white-space: nowrap;
 }
 .badge .dot { width:6px; height:6px; border-radius:50%; flex-shrink:0; }
-.badge.green { background:rgba(5,150,105,.1); border:1px solid rgba(5,150,105,.25); color:#34d399; }
-.badge.green .dot { background:#10b981; }
-.badge.red   { background:rgba(220,38,38,.1); border:1px solid rgba(220,38,38,.25); color:#f87171; }
-.badge.red   .dot { background:#ef4444; }
-.badge.amber { background:rgba(217,119,6,.1); border:1px solid rgba(217,119,6,.25); color:#fbbf24; }
-.badge.amber .dot { background:#f59e0b; }
-.badge.gray  { background:rgba(55,65,81,.25); border:1px solid rgba(55,65,81,.5); color:#4a6080; }
-.badge.gray  .dot { background:#374151; }
+.badge.green { background:rgba(5,150,105,.15); border:1px solid rgba(52,211,153,.3); color:#4ade80; }
+.badge.green .dot  { background:#34d399; }
+.badge.red   { background:rgba(185,28,28,.15); border:1px solid rgba(248,113,113,.3); color:#f87171; }
+.badge.red   .dot  { background:#ef4444; }
+.badge.amber { background:rgba(180,83,9,.15); border:1px solid rgba(251,191,36,.3); color:#fbbf24; }
+.badge.amber .dot  { background:#f59e0b; }
+.badge.gray  { background:rgba(51,65,85,.4); border:1px solid rgba(100,116,139,.35); color:#8fa3be; }
+.badge.gray  .dot  { background:#64748b; }
 
 /* ── Log box ── */
 .logbox {
-    background: #060a10;
-    border: 1px solid #1a2535;
+    background: #161e2e;
+    border: 1px solid #2a3650;
     border-radius: 12px;
     padding: 16px 20px;
     font-family: 'DM Mono', monospace;
-    font-size: 12px;
+    font-size: 12.5px;
     line-height: 1.75;
     white-space: pre-wrap;
     word-break: break-all;
     max-height: 520px;
     overflow-y: auto;
-    scrollbar-width: thin;
-    scrollbar-color: #1e2d45 transparent;
 }
-.le  { color: #f87171; display: block; }
-.lo  { color: #34d399; display: block; }
-.lw  { color: #fbbf24; display: block; }
-.li  { color: #60a5fa; display: block; }
-.ln  { color: #3d5069; display: block; }
+.le { color: #f87171; display:block; }
+.lo { color: #4ade80; display:block; }
+.lw { color: #fbbf24; display:block; }
+.li { color: #60a5fa; display:block; }
+.ln { color: #8fa3be; display:block; }
 
-/* ── Next run box ── */
+/* ── Next run ── */
 .next-run {
-    background: rgba(29,78,216,.06);
-    border: 1px solid rgba(29,78,216,.18);
+    background: rgba(37,99,235,.1);
+    border: 1px solid rgba(37,99,235,.25);
     border-radius: 10px;
     padding: 10px 16px;
     font-family: 'DM Mono', monospace;
     font-size: 12.5px;
-    color: #60a5fa;
+    color: #7db8f7;
     margin-top: 10px;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-}
-
-/* ── Region chip ── */
-.rgn-chip {
-    display: inline-block;
-    font-family: 'DM Mono', monospace;
-    font-size: 11px;
-    background: rgba(96,165,250,.08);
-    border: 1px solid rgba(96,165,250,.2);
-    color: #60a5fa;
-    padding: 3px 12px;
-    border-radius: 20px;
-    margin-left: 10px;
-}
-.rgn-chip.none {
-    background: #0d1525;
-    border-color: #1e2d45;
-    color: #2a3d55;
+    display: flex; align-items: center; gap: 8px;
 }
 
 /* ── Streamlit overrides ── */
 .stButton > button {
-    background: #111827 !important;
-    color: #dde4f0 !important;
-    border: 1px solid #1e2d45 !important;
+    background: #2a3650 !important;
+    color: #c8d8ec !important;
+    border: 1px solid #3a4f6a !important;
     border-radius: 8px !important;
     font-family: 'Noto Sans TC', sans-serif !important;
     font-weight: 600 !important;
@@ -324,65 +287,61 @@ div[data-testid="stHorizontalBlock"]:has(div.nav-wrap) {
     transition: all .15s !important;
 }
 .stButton > button:hover {
-    background: rgba(29,78,216,.18) !important;
-    color: #93c5fd !important;
-    border-color: #2563eb !important;
+    background: rgba(37,99,235,.2) !important;
+    color: #7db8f7 !important;
+    border-color: #4a8fd4 !important;
 }
-.stSelectbox label, .stTextInput label, .stTextArea label, .stCheckbox label,
-.stMultiSelect label {
-    color: #7a92ae !important;
-    font-size: 12.5px !important;
+.stSelectbox label, .stTextInput label, .stTextArea label,
+.stCheckbox label, .stMultiSelect label {
+    color: #8fa3be !important;
+    font-size: 13px !important;
     font-weight: 600 !important;
 }
 .stSelectbox > div > div,
 .stTextInput input,
 .stTextArea textarea {
-    background: #080c14 !important;
-    color: #dde4f0 !important;
-    border: 1px solid #1e2d45 !important;
+    background: #161e2e !important;
+    color: #d4dce8 !important;
+    border: 1px solid #2e3f5c !important;
     border-radius: 8px !important;
     font-size: 13px !important;
 }
-[data-testid="stMetricLabel"]  { color: #3d5069 !important; font-size: 12px !important; }
-[data-testid="stMetricValue"]  { color: #dde4f0 !important; font-size: 26px !important; font-weight: 800 !important; }
+[data-testid="stMetricLabel"]  { color: #6b7fa0 !important; font-size: 12px !important; }
+[data-testid="stMetricValue"]  { color: #e2eaf6 !important; font-size: 26px !important; font-weight: 800 !important; }
 [data-testid="metric-container"] {
-    background: #0d1525 !important;
-    border: 1px solid #1e2d45 !important;
+    background: #222d42 !important;
+    border: 1px solid #2e3f5c !important;
     border-radius: 12px !important;
     padding: 16px 20px !important;
 }
-.stTabs [data-baseweb="tab-list"] { background: transparent !important; border-bottom: 1px solid #1e2d45 !important; gap: 0 !important; }
-.stTabs [data-baseweb="tab"] { background: transparent !important; color: #2a3d55 !important; font-size: 13px !important; font-weight: 700 !important; padding: 8px 20px !important; border-radius: 0 !important; }
-.stTabs [aria-selected="true"] { color: #60a5fa !important; border-bottom: 2px solid #2563eb !important; }
-.stCaption, [data-testid="stCaptionContainer"] { color: #2a3d55 !important; }
-details > summary, .streamlit-expanderHeader { color: #7a92ae !important; font-size: 13px !important; font-weight: 600 !important; }
+.stTabs [data-baseweb="tab-list"] { background:transparent !important; border-bottom:1px solid #2a3650 !important; gap:0 !important; }
+.stTabs [data-baseweb="tab"] { background:transparent !important; color:#5a7090 !important; font-size:13px !important; font-weight:700 !important; padding:8px 22px !important; border-radius:0 !important; }
+.stTabs [aria-selected="true"] { color:#7db8f7 !important; border-bottom:2px solid #4a8fd4 !important; }
+.stCaption, [data-testid="stCaptionContainer"] { color: #6b7fa0 !important; font-size: 12px !important; }
+details > summary, .streamlit-expanderHeader { color: #a0b4cc !important; font-size: 13px !important; font-weight: 600 !important; }
+hr { border-color: #2a3650 !important; margin: 8px 0 16px !important; }
+[data-testid="stCodeBlock"] { background: #161e2e !important; border: 1px solid #2a3650 !important; border-radius: 8px !important; }
 [data-testid="stAlert"] { border-radius: 8px !important; }
-hr { border-color: #1a2535 !important; margin: 8px 0 16px !important; }
-[data-testid="stCodeBlock"] { background: #060a10 !important; border: 1px solid #1a2535 !important; border-radius: 8px !important; }
 </style>
 """, unsafe_allow_html=True)
 
 # ══════════════════════════════════════════════════
 # Session state
 # ══════════════════════════════════════════════════
-defaults = {
-    "page": "排程主控表",
-    "region": None,
-}
-for k, v in defaults.items():
+for k, v in {"page": "排程主控表", "region": None}.items():
     if k not in st.session_state:
         st.session_state[k] = v
 
 # ══════════════════════════════════════════════════
-# Config / RunLog helpers
+# Config / RunLog
 # ══════════════════════════════════════════════════
 DEFAULT_CONFIG = {
     "daily": [
-        {"id": "d1", "label": "排班統計表",  "script": "schedule_report.py", "args": [], "schedule": "01:00", "all_regions": True},
-        {"id": "d2", "label": "專員班表",    "script": "staff_schedule.py",  "args": [], "schedule": "01:10", "all_regions": True},
-        {"id": "d3", "label": "專員個資",    "script": "staff_info.py",      "args": [], "schedule": "01:20", "all_regions": True},
-        {"id": "d4", "label": "當月次月訂單","script": "orders_report.py",   "args": [], "schedule": "01:30", "all_regions": True},
-        {"id": "d5", "label": "業績報表",    "script": "performance_report.py", "args": [], "schedule": "01:40", "all_regions": True}
+        {"id": "d1", "label": "排班統計表",  "script": "schedule_report.py", "args": [], "schedule": "01:00", "all_regions": False},
+        {"id": "d2", "label": "專員班表",    "script": "staff_schedule.py",  "args": [], "schedule": "02:00", "all_regions": False},
+        {"id": "d3", "label": "專員個資",    "script": "staff_info.py",      "args": [], "schedule": "02:30", "all_regions": False},
+        {"id": "d4", "label": "當月次月訂單","script": "orders_report.py",   "args": [], "schedule": "08:00", "all_regions": True},
+        {"id": "d5", "label": "業績報表",    "script": "業績報表.py",         "args": [], "schedule": "08:00", "all_regions": True},
     ],
     "monthly": [
         {"id": "m1", "label": "上半月訂單",  "script": "上下半月訂單.py", "args": ["1"], "schedule": "月初01日", "all_regions": True},
@@ -391,7 +350,7 @@ DEFAULT_CONFIG = {
         {"id": "m4", "label": "預收",        "script": "預收.py",         "args": [],    "schedule": "月底",    "all_regions": False},
         {"id": "m5", "label": "儲值金結算",  "script": "儲值金結算.py",   "args": [],    "schedule": "月底",    "all_regions": False},
         {"id": "m6", "label": "儲值金預收",  "script": "儲值金預收.py",   "args": [],    "schedule": "月底",    "all_regions": False},
-   ],
+    ],
     "log_files": {},
 }
 
@@ -432,7 +391,7 @@ def rkey(job_id, region=None):
 def record_run(key, ok, stdout, stderr):
     log = load_runlog()
     log[key] = {
-        "last_run": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "last_run": now_tw().strftime("%Y-%m-%d %H:%M:%S"),
         "ok": ok,
         "stdout": (stdout or "")[-1500:],
         "stderr": (stderr or "")[-1500:],
@@ -462,12 +421,8 @@ def run_script(script, args=None, region=None):
             cmd, capture_output=True, text=True,
             timeout=300, cwd=str(BASE_DIR), env=env,
         )
-        return {
-            "ok":     result.returncode == 0,
-            "cmd":    " ".join(cmd),
-            "stdout": result.stdout,
-            "stderr": result.stderr,
-        }
+        return {"ok": result.returncode == 0, "cmd": " ".join(cmd),
+                "stdout": result.stdout, "stderr": result.stderr}
     except Exception as e:
         return {"ok": False, "cmd": " ".join(cmd), "stdout": "", "stderr": str(e)}
 
@@ -483,28 +438,27 @@ def do_run_job(job, region):
 
 
 # ══════════════════════════════════════════════════
-# Output files
+# Output / Log helpers
 # ══════════════════════════════════════════════════
 def scan_output():
     files = []
+    today_date = now_tw().date()
     for p in sorted(OUTPUT_DIR.rglob("*")):
         if p.is_file():
             s = p.stat()
+            mdt = datetime.fromtimestamp(s.st_mtime, tz=TZ)
             files.append({
                 "name":      p.name,
                 "path":      p,
                 "folder":    str(p.parent.relative_to(OUTPUT_DIR)) if p.parent != OUTPUT_DIR else "根目錄",
                 "size_kb":   round(s.st_size / 1024, 1),
-                "mtime":     datetime.fromtimestamp(s.st_mtime),
-                "mtime_str": datetime.fromtimestamp(s.st_mtime).strftime("%Y-%m-%d %H:%M"),
-                "today":     datetime.fromtimestamp(s.st_mtime).date() == datetime.today().date(),
+                "mtime":     mdt,
+                "mtime_str": mdt.strftime("%Y-%m-%d %H:%M"),
+                "today":     mdt.date() == today_date,
             })
     return sorted(files, key=lambda x: x["mtime"], reverse=True)
 
 
-# ══════════════════════════════════════════════════
-# Log helpers
-# ══════════════════════════════════════════════════
 def read_last_lines(path, n=150):
     if isinstance(path, str):
         path = Path(path)
@@ -534,30 +488,19 @@ def highlight_log(text):
     return "\n".join(html)
 
 
-# ══════════════════════════════════════════════════
-# Schedule helpers
-# ══════════════════════════════════════════════════
 def calc_next_run(schedule_str: str) -> str:
-    """
-    Schedule string formats:
-      "HH:MM"      → daily at that time
-      "月初01日"   → day 1 of month
-      "月中15日" / "月中16日"
-      "月底"       → day 28
-    """
-    now = datetime.now()
+    now = now_tw()
     try:
-        if ":" in schedule_str and len(schedule_str) == 5:
-            h, m = int(schedule_str[:2]), int(schedule_str[3:])
+        s = schedule_str.strip()
+        if len(s) == 5 and ":" in s:
+            h, m = int(s[:2]), int(s[3:])
             candidate = now.replace(hour=h, minute=m, second=0, microsecond=0)
             if candidate <= now:
                 candidate += timedelta(days=1)
             return candidate.strftime("%Y-%m-%d  %H:%M")
-
-        # monthly patterns
         day_map = {"月初": 1, "月中": 15, "月底": 28}
         for prefix, day in day_map.items():
-            if prefix in schedule_str:
+            if prefix in s:
                 candidate = now.replace(day=day, hour=1, minute=0, second=0, microsecond=0)
                 if candidate <= now:
                     if now.month == 12:
@@ -578,10 +521,8 @@ def file_size_str(path):
     if not path or not path.exists():
         return "—"
     s = path.stat().st_size
-    if s < 1024:
-        return f"{s} B"
-    if s < 1024 * 1024:
-        return f"{s/1024:.1f} KB"
+    if s < 1024:        return f"{s} B"
+    if s < 1024*1024:   return f"{s/1024:.1f} KB"
     return f"{s/1024/1024:.1f} MB"
 
 
@@ -592,11 +533,10 @@ cfg    = load_config()
 runlog = load_runlog()
 REGIONS = sorted(ACCOUNTS.keys()) if ACCOUNTS else []
 
-
 # ══════════════════════════════════════════════════
 # Top strip
 # ══════════════════════════════════════════════════
-now_str = datetime.now().strftime("%Y/%m/%d  %H:%M")
+now_str = now_tw().strftime("%Y/%m/%d  %H:%M")
 rgn = st.session_state.region
 chip_html = (
     f'<span class="rgn-chip">📍 {rgn}</span>'
@@ -607,13 +547,13 @@ st.markdown(
     f'<div class="topstrip">'
     f'<div class="topstrip-brand">📊 營運報表控制台</div>'
     f'{chip_html}'
-    f'<div class="topstrip-time">🕐 {now_str}</div>'
+    f'<div class="topstrip-time">🕐 {now_str} 台北</div>'
     f'</div>',
     unsafe_allow_html=True,
 )
 
 # ══════════════════════════════════════════════════
-# Nav bar（純 Streamlit 按鈕，不疊層）
+# Nav bar
 # ══════════════════════════════════════════════════
 PAGES = ["排程主控表", "手動執行", "Log 監控", "輸出報表", "腳本管理"]
 ICONS = ["📋", "▶️", "📄", "📂", "⚙️"]
@@ -631,21 +571,18 @@ for i, (pg, ic) in enumerate(zip(PAGES, ICONS)):
 page = st.session_state.page
 
 # ══════════════════════════════════════════════════
-# 地區選擇器（共用）
+# 地區選擇器
 # ══════════════════════════════════════════════════
 def region_selector(allow_all=False):
     if not ACCOUNTS:
         st.error("⚠️ 找不到 Streamlit secrets 帳密，請到 App settings > Secrets 設定。")
         return None
-
     opts = ["（不指定地區）"]
     if allow_all:
         opts.append(REGION_ALL)
     opts += REGIONS
-
     cur_rgn = st.session_state.region
     idx     = opts.index(cur_rgn) if cur_rgn in opts else 0
-
     c_sel, c_info = st.columns([2, 5])
     with c_sel:
         sel = st.selectbox("📍 操作地區", opts, index=idx, key="rgn_widget")
@@ -659,7 +596,6 @@ def region_selector(allow_all=False):
             st.info(f"🌐 將依序執行所有地區：{', '.join(REGIONS)}")
         else:
             st.caption("未指定地區時腳本不會收到帳密環境變數")
-
     new_val = None if sel == "（不指定地區）" else sel
     if new_val != st.session_state.region:
         st.session_state.region = new_val
@@ -667,9 +603,6 @@ def region_selector(allow_all=False):
     return new_val
 
 
-# ══════════════════════════════════════════════════
-# 執行結果展示
-# ══════════════════════════════════════════════════
 def show_run_result(label, pairs):
     st.markdown(f"**執行結果：{label}**")
     for rgn_name, res in pairs:
@@ -680,8 +613,10 @@ def show_run_result(label, pairs):
             st.error(f"❌ {prefix}失敗")
         with st.expander(f"{prefix}詳細輸出", expanded=not res["ok"]):
             st.code(res.get("cmd", ""), language="bash")
-            st.text_area("stdout", res.get("stdout", "") or "(empty)", height=200, key=f"_so_{label}_{rgn_name}_{id(res)}")
-            st.text_area("stderr", res.get("stderr", "") or "(empty)", height=150, key=f"_se_{label}_{rgn_name}_{id(res)}")
+            st.text_area("stdout", res.get("stdout", "") or "(empty)", height=200,
+                         key=f"_so_{label}_{rgn_name}_{id(res)}")
+            st.text_area("stderr", res.get("stderr", "") or "(empty)", height=150,
+                         key=f"_se_{label}_{rgn_name}_{id(res)}")
 
 
 # ══════════════════════════════════════════════════
@@ -689,7 +624,6 @@ def show_run_result(label, pairs):
 # ══════════════════════════════════════════════════
 if page == "排程主控表":
     st.markdown('<div class="pg-title">排程主控表</div><div class="pg-sub">SCHEDULE DASHBOARD</div>', unsafe_allow_html=True)
-
     region = region_selector()
 
     all_jobs   = cfg["daily"] + cfg["monthly"]
@@ -708,11 +642,9 @@ if page == "排程主控表":
 
     def render_task_section(jobs, title, section_key):
         st.markdown(f'<div class="panel"><div class="panel-head"><div class="panel-tag">{title}</div><div class="panel-note">勾選後可批次執行</div></div>', unsafe_allow_html=True)
-
-        # Header
-        hcols = st.columns([0.4, 2.0, 1.4, 2.2, 1.8, 1.6, 0.9])
-        for txt, col in zip(["", "任務名稱", "排程", "腳本", "狀態", "最後執行", "執行"], hcols):
-            col.markdown(f"<span style='font-family:\"DM Mono\",monospace;font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:#2a3d55'>{txt}</span>", unsafe_allow_html=True)
+        hcols = st.columns([0.4, 2.0, 1.4, 2.2, 1.8, 1.8, 0.9])
+        for txt, col in zip(["", "任務名稱", "排程", "腳本", "狀態", "最後執行 / 下次預估", "執行"], hcols):
+            col.markdown(f"<span style='font-family:\"DM Mono\",monospace;font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:#3a4f6a'>{txt}</span>", unsafe_allow_html=True)
 
         checked_jobs = []
         for job in jobs:
@@ -726,39 +658,32 @@ if page == "排程主控表":
             if ok is True:
                 st_badge = badge_html("green", "✓ 成功")
             elif ok is False:
-                st_badge = badge_html("red", "✗ 失敗")
+                st_badge = badge_html("red",   "✗ 失敗")
             else:
-                st_badge = badge_html("gray", "— 待執行")
+                st_badge = badge_html("gray",  "— 待執行")
 
-            e_icon  = "🟢" if exists else "🔴"
-            args_str = " ".join(job.get("args", [])) or ""
+            e_icon = "🟢" if exists else "🔴"
+            args_str = " ".join(job.get("args", []))
             script_display = f"{e_icon} `{job['script']}`" + (f" `{args_str}`" if args_str else "")
             next_run = calc_next_run(job.get("schedule", ""))
 
-            row = st.columns([0.4, 2.0, 1.4, 2.2, 1.8, 1.6, 0.9])
-
+            row = st.columns([0.4, 2.0, 1.4, 2.2, 1.8, 1.8, 0.9])
             with row[0]:
                 sel = st.checkbox("", key=f"batch_{section_key}_{job['id']}", label_visibility="collapsed")
                 if sel:
                     checked_jobs.append(job)
-
             with row[1]:
                 st.markdown(f"**{job['label']}**")
-
             with row[2]:
                 st.caption(job.get("schedule", "—"))
-
             with row[3]:
                 st.markdown(script_display)
-
             with row[4]:
                 st.markdown(st_badge, unsafe_allow_html=True)
-
             with row[5]:
-                st.caption(last_short)
+                st.caption(f"上次：{last_short}")
                 if next_run != "—":
                     st.caption(f"↻ {next_run}")
-
             with row[6]:
                 if st.button("▶", key=f"run_{section_key}_{job['id']}", help=f"執行 {job['label']}"):
                     with st.spinner(f"執行 {job['label']} …"):
@@ -772,15 +697,14 @@ if page == "排程主控表":
     checked_daily   = render_task_section(cfg["daily"],   "📅 每日排程", "daily")
     checked_monthly = render_task_section(cfg["monthly"], "🗓️ 月排程",   "monthly")
 
-    # Batch execution
     all_checked = checked_daily + checked_monthly
     st.markdown('<div class="panel"><div class="panel-head"><div class="panel-tag">⚙️ 控制</div></div>', unsafe_allow_html=True)
-    cc1, cc2, cc3 = st.columns([1, 1.5, 3])
+    cc1, cc2, cc3 = st.columns([1, 1.5, 4])
     with cc1:
         if st.button("🔄 重新整理", use_container_width=True):
             st.rerun()
     with cc2:
-        if st.button("▶ 執行已勾選", use_container_width=True, type="primary"):
+        if st.button("▶ 執行已勾選", use_container_width=True):
             if not all_checked:
                 st.warning("請先勾選至少一個任務")
             else:
@@ -791,7 +715,6 @@ if page == "排程主控表":
                 st.rerun()
     st.markdown("</div>", unsafe_allow_html=True)
 
-    # Failures detail
     failures = [
         (j, runlog.get(rkey(j["id"], region)) or runlog.get(j["id"]))
         for j in all_jobs
@@ -813,7 +736,6 @@ if page == "排程主控表":
 # ══════════════════════════════════════════════════
 elif page == "手動執行":
     st.markdown('<div class="pg-title">手動執行</div><div class="pg-sub">MANUAL TRIGGER</div>', unsafe_allow_html=True)
-
     region = region_selector(allow_all=True)
 
     def run_and_show(job):
@@ -822,9 +744,9 @@ elif page == "手動執行":
         show_run_result(job["label"], pairs)
 
     st.markdown('<div class="panel"><div class="panel-head"><div class="panel-tag">📅 每日報表</div></div>', unsafe_allow_html=True)
-    cols = st.columns(4)
+    cols = st.columns(5)
     for i, job in enumerate(cfg["daily"]):
-        with cols[i % 4]:
+        with cols[i % 5]:
             if st.button(job["label"], key=f"man_{job['id']}", use_container_width=True):
                 run_and_show(job)
     st.markdown("</div>", unsafe_allow_html=True)
@@ -872,17 +794,11 @@ elif page == "手動執行":
 elif page == "Log 監控":
     st.markdown('<div class="pg-title">Log 監控</div><div class="pg-sub">LOG MONITOR</div>', unsafe_allow_html=True)
 
-    # 建立 log 檔選項：config 中儲存的 + logs/ 目錄自動掃描
-    builtin_logs = {
-        "run_log（JSON 執行紀錄）": RUNLOG_F,
-    }
-    # 自動掃描 logs/ 目錄
+    builtin_logs = {"run_log（JSON 執行紀錄）": RUNLOG_F}
     if LOG_DIR.exists():
         for lf in sorted(LOG_DIR.glob("*.log")):
             builtin_logs[lf.name] = lf
-    # config 中額外設定的 log
-    extra = cfg.get("log_files", {})
-    for name, path_str in extra.items():
+    for name, path_str in cfg.get("log_files", {}).items():
         builtin_logs[name] = Path(path_str)
 
     st.markdown('<div class="panel"><div class="panel-head"><div class="panel-tag">📄 Log 查看器</div></div>', unsafe_allow_html=True)
@@ -898,26 +814,22 @@ elif page == "Log 監控":
 
     log_path = builtin_logs[sel_log_name]
 
-    # JSON run_log 特別處理
     if sel_log_name.startswith("run_log"):
         st.caption(f"檔案：{log_path}")
         if log_path.exists():
             try:
+                import pandas as pd
                 data = json.loads(log_path.read_text(encoding="utf-8"))
                 rows = []
                 for k, v in sorted(data.items(), key=lambda x: x[1].get("last_run", ""), reverse=True):
                     rows.append({
-                        "key":      k,
-                        "last_run": v.get("last_run", "—"),
-                        "狀態":     "✅ 成功" if v.get("ok") else "❌ 失敗",
+                        "key":            k,
+                        "last_run":       v.get("last_run", "—"),
+                        "狀態":           "✅ 成功" if v.get("ok") else "❌ 失敗",
                         "stderr_preview": (v.get("stderr") or "")[:80],
                     })
-                import pandas as pd
-                st.dataframe(
-                    pd.DataFrame(rows)[["key", "last_run", "狀態", "stderr_preview"]],
-                    use_container_width=True,
-                    hide_index=True,
-                )
+                st.dataframe(pd.DataFrame(rows)[["key", "last_run", "狀態", "stderr_preview"]],
+                             use_container_width=True, hide_index=True)
                 with st.expander("查看完整 JSON"):
                     st.json(data)
             except Exception as e:
@@ -927,17 +839,13 @@ elif page == "Log 監控":
     else:
         mtime_str = ""
         if log_path.exists():
-            mtime_str = datetime.fromtimestamp(log_path.stat().st_mtime).strftime("%Y-%m-%d %H:%M:%S")
+            mtime_str = datetime.fromtimestamp(log_path.stat().st_mtime, tz=TZ).strftime("%Y-%m-%d %H:%M:%S")
         st.caption(f"檔案：{log_path}  ·  更新：{mtime_str}")
         raw = read_last_lines(log_path, n_lines)
-        st.markdown(
-            f'<div class="logbox">{highlight_log(raw)}</div>',
-            unsafe_allow_html=True,
-        )
+        st.markdown(f'<div class="logbox">{highlight_log(raw)}</div>', unsafe_allow_html=True)
 
     st.markdown("</div>", unsafe_allow_html=True)
 
-    # Extra log 管理
     st.markdown('<div class="panel"><div class="panel-head"><div class="panel-tag">➕ 新增監控 Log 路徑</div></div>', unsafe_allow_html=True)
     with st.form("add_log_form"):
         l1, l2 = st.columns(2)
@@ -954,6 +862,7 @@ elif page == "Log 監控":
             else:
                 st.error("別名與路徑為必填")
 
+    extra = cfg.get("log_files", {})
     if extra:
         st.markdown("**已設定的額外 Log：**")
         for name in list(extra.keys()):
@@ -974,8 +883,8 @@ elif page == "Log 監控":
 elif page == "輸出報表":
     st.markdown('<div class="pg-title">輸出報表</div><div class="pg-sub">OUTPUT FILES</div>', unsafe_allow_html=True)
 
-    files   = scan_output()
-    folders = sorted({f["folder"] for f in files})
+    files       = scan_output()
+    folders     = sorted({f["folder"] for f in files})
     today_files = [f for f in files if f["today"]]
 
     st.markdown(f"""
@@ -987,12 +896,11 @@ elif page == "輸出報表":
     </div>
     """, unsafe_allow_html=True)
 
-    # Today's files highlight
     if today_files:
-        st.markdown('<div class="panel"><div class="panel-head"><div class="panel-tag">🟢 今日產出</div><div class="panel-note">今日已完成輸出</div></div>', unsafe_allow_html=True)
+        st.markdown('<div class="panel"><div class="panel-head"><div class="panel-tag">🟢 今日產出</div></div>', unsafe_allow_html=True)
         hcols = st.columns([4, 2, 2, 1])
         for txt, col in zip(["檔名", "資料夾", "時間", "大小"], hcols):
-            col.markdown(f"<span style='font-family:\"DM Mono\",monospace;font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:#2a3d55'>{txt}</span>", unsafe_allow_html=True)
+            col.markdown(f"<span style='font-family:\"DM Mono\",monospace;font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:#3a4f6a'>{txt}</span>", unsafe_allow_html=True)
         st.divider()
         for f in today_files[:20]:
             row = st.columns([4, 2, 2, 1])
@@ -1002,7 +910,6 @@ elif page == "輸出報表":
             row[3].caption(f"{f['size_kb']} KB")
         st.markdown("</div>", unsafe_allow_html=True)
 
-    # Full file browser
     st.markdown('<div class="panel"><div class="panel-head"><div class="panel-tag">📁 全部檔案</div></div>', unsafe_allow_html=True)
     c_fld, c_kw, c_ref = st.columns([2, 3, 1])
     with c_fld:
@@ -1025,7 +932,7 @@ elif page == "輸出報表":
     else:
         hcols = st.columns([4, 2, 2, 1, 1])
         for txt, col in zip(["檔名", "資料夾", "修改時間", "大小", "今日"], hcols):
-            col.markdown(f"<span style='font-family:\"DM Mono\",monospace;font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:#2a3d55'>{txt}</span>", unsafe_allow_html=True)
+            col.markdown(f"<span style='font-family:\"DM Mono\",monospace;font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:#3a4f6a'>{txt}</span>", unsafe_allow_html=True)
         st.divider()
         for f in filtered:
             row = st.columns([4, 2, 2, 1, 1])
@@ -1049,12 +956,11 @@ elif page == "腳本管理":
     tab_d, tab_m, tab_edit, tab_reset = st.tabs(["📅 每日腳本", "🗓️ 月腳本", "📝 線上編輯", "🔧 重置"])
 
     def new_id(prefix="x"):
-        return f"{prefix}{datetime.now().strftime('%f')}"
+        return f"{prefix}{now_tw().strftime('%f')}"
 
     def job_editor(group_key, tab):
         with tab:
             jobs = cfg[group_key]
-
             st.markdown('<div class="panel"><div class="panel-head"><div class="panel-tag">現有腳本</div></div>', unsafe_allow_html=True)
             for idx, job in enumerate(jobs):
                 exists = (BASE_DIR / job["script"]).exists()
@@ -1068,11 +974,9 @@ elif page == "腳本管理":
                         new_args   = st.text_input("參數（空格分隔）",    " ".join(job.get("args", [])), key=f"arg_{job['id']}")
                         new_sched  = st.text_input("排程說明",            job.get("schedule", ""),       key=f"sch_{job['id']}")
                     new_multi = st.checkbox("需跑全部地區", value=job.get("all_regions", False), key=f"mul_{job['id']}")
-
                     next_run = calc_next_run(new_sched)
                     if next_run != "—":
                         st.markdown(f'<div class="next-run">⏭️ 下次執行預估：<strong>{next_run}</strong></div>', unsafe_allow_html=True)
-
                     a1, a2, a3 = st.columns(3)
                     with a1:
                         if st.button("💾 儲存", key=f"save_{job['id']}"):
@@ -1158,4 +1062,7 @@ elif page == "腳本管理":
 # Footer
 # ══════════════════════════════════════════════════
 st.markdown("<br>", unsafe_allow_html=True)
-st.caption(f"營運報表控制台 v5  ·  {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}  ·  可用地區：{', '.join(REGIONS) if REGIONS else '尚未設定'}")
+st.caption(
+    f"營運報表控制台 v5.1  ·  {now_tw().strftime('%Y-%m-%d %H:%M:%S')} 台北  ·  "
+    f"可用地區：{', '.join(REGIONS) if REGIONS else '尚未設定'}"
+)
