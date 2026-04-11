@@ -346,10 +346,10 @@ DEFAULT_CONFIG = {
     "monthly": [
         {"id": "m1", "label": "上半月訂單",  "script": "half_month_orders.py", "args": ["1"], "schedule": "每月15日", "all_regions": True},
         {"id": "m2", "label": "下半月訂單",  "script": "half_month_orders.py", "args": ["2"], "schedule": "每月底", "all_regions": True},
-        {"id": "m3", "label": "已退款",      "script": "refund_report.py",       "args": [],    "schedule": "月底",    "all_regions": True},
-        {"id": "m4", "label": "預收",        "script": "prepaid_report.py",         "args": [],    "schedule": "月底",    "all_regions": False},
-        {"id": "m5", "label": "儲值金結算",  "script": "儲值金結算.py",   "args": [],    "schedule": "月初",    "all_regions": False},
-        {"id": "m6", "label": "儲值金預收",  "script": "儲值金預收.py",   "args": [],    "schedule": "月初",    "all_regions": False},
+        {"id": "m3", "label": "已退款",     "script": "refund_report.py",     "args": [],    "schedule": "月底",    "all_regions": True},
+        {"id": "m4", "label": "預收",       "script": "prepaid_report.py",    "args": [],    "schedule": "月底",    "all_regions": False},
+        {"id": "m5", "label": "儲值金結算",  "script": "stored_value_settlement.py", "args": [],    "schedule": "月初",    "all_regions": False},
+        {"id": "m6", "label": "儲值金預收",  "script": "stored_value_prepaid.py.py",   "args": [],    "schedule": "月初",    "all_regions": False},
     ],
     "log_files": {},
 }
