@@ -341,7 +341,7 @@ DEFAULT_CONFIG = {
         {"id": "d2", "label": "專員班表",    "script": "staff_schedule.py",  "args": [], "schedule": "02:00", "all_regions": False},
         {"id": "d3", "label": "專員個資",    "script": "staff_info.py",      "args": [], "schedule": "02:30", "all_regions": False},
         {"id": "d4", "label": "當月次月訂單","script": "orders_report.py",   "args": [], "schedule": "08:00", "all_regions": True},
-        {"id": "d5", "label": "業績報表",    "script": "業績報表.py",         "args": [], "schedule": "08:00", "all_regions": True},
+        {"id": "d5", "label": "業績報表",    "script": "performance_report.py", "args": [], "schedule": "08:00", "all_regions": True},
     ],
     "monthly": [
         {"id": "m1", "label": "上半月訂單",  "script": "上下半月訂單.py", "args": ["1"], "schedule": "月初01日", "all_regions": True},
