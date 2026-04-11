@@ -27,7 +27,7 @@ CITY_ORDER = ["台北", "台中", "桃園", "新竹", "高雄"]
 tz = timezone(timedelta(hours=8))
 
 # 👉 Google Drive 資料夾
-DRIVE_FOLDER_ID = "1bKvjmPNEbzGXOq5lFfykYbhkNIyzMw9v"
+DRIVE_FOLDER_ID = "1_b2EjuCAZ6qdlzUjY_PiecbpV7MKBC2t"
 
 SCOPES = ["https://www.googleapis.com/auth/drive"]
 
