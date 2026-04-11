@@ -1,6 +1,6 @@
 import os
 import tempfile
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 
 import requests
 import streamlit as st
@@ -23,22 +23,28 @@ API_LIMIT = 10000
 GDRIVE_FOLDER_ID = "10__ajnbpu2oabAVUG_u3RAHK2a2vcgj2"
 GDRIVE_SCOPES = ["https://www.googleapis.com/auth/drive"]
 
-
-def get_selected_region_account():
-    region_name = os.getenv("REGION_NAME", "").strip()
-    region_email = os.getenv("REGION_EMAIL", "").strip()
-    region_password = os.getenv("REGION_PASSWORD", "").strip()
-
-    if not region_name:
-        raise RuntimeError("未指定地區，請先在介面選擇台北或台中")
-
-    if not region_email or not region_password:
-        raise RuntimeError(f"{region_name} 找不到帳密，請檢查 Streamlit secrets 或地區設定")
-
-    return region_name, region_email, region_password
+# 台北時區
+TZ = timezone(timedelta(hours=8))
 
 
-def login(session, email, password):
+def load_accounts():
+    return [
+        (
+            "台北",
+            st.secrets["accounts"]["taipei"]["email"],
+            st.secrets["accounts"]["taipei"]["password"],
+        ),
+        (
+            "台中",
+            st.secrets["accounts"]["taichung"]["email"],
+            st.secrets["accounts"]["taichung"]["password"],
+        ),
+    ]
+
+
+def login(email: str, password: str) -> requests.Session:
+    session = requests.Session()
+
     res = session.get(LOGIN_URL, headers=HEADERS, allow_redirects=True)
     soup = BeautifulSoup(res.text, "html.parser")
 
@@ -64,24 +70,24 @@ def login(session, email, password):
     if "login" in login_res.url.lower():
         raise RuntimeError(f"{email} 登入失敗")
 
-    print(f"✅ 登入成功：{email}")
+    return session
 
 
 def get_months():
-    today = datetime.today()
+    now = datetime.now(TZ)
 
-    this_month = today.strftime("%Y-%m")
-    this_file_date = today.strftime("%Y%m%d")
+    this_month = now.strftime("%Y-%m")
+    this_file_date = now.strftime("%Y%m%d")
 
-    if today.month == 12:
-        next_year = today.year + 1
+    if now.month == 12:
+        next_year = now.year + 1
         next_month_num = 1
     else:
-        next_year = today.year
-        next_month_num = today.month + 1
+        next_year = now.year
+        next_month_num = now.month + 1
 
     next_month = f"{next_year}-{next_month_num:02d}"
-    next_file_date = f"{next_year}{next_month_num:02d}{today.day:02d}"
+    next_file_date = f"{next_year}{next_month_num:02d}{now.day:02d}"
 
     return this_month, next_month, this_file_date, next_file_date
 
@@ -101,7 +107,7 @@ def get_drive_service():
         raise RuntimeError(f"Google Drive 初始化失敗：{e}")
 
 
-def upload_to_gdrive(local_path):
+def upload_to_gdrive(local_path: str):
     service = get_drive_service()
     filename = os.path.basename(local_path)
 
@@ -123,7 +129,7 @@ def upload_to_gdrive(local_path):
     return created["id"]
 
 
-def export_cleaner_schedule(session, month, city, filename):
+def export_cleaner_schedule(session: requests.Session, month: str, city: str, filename: str):
     url = f"{EXPORT_BASE}?month={month}&limit={API_LIMIT}"
     res = session.get(url, headers=HEADERS, allow_redirects=True)
 
@@ -147,27 +153,27 @@ def export_cleaner_schedule(session, month, city, filename):
 
 
 def main():
-    city, email, password = get_selected_region_account()
     this_month, next_month, this_date, next_date = get_months()
+    regions = load_accounts()
 
-    session = requests.Session()
+    for city, email, password in regions:
+        print(f"\n=== 處理 {city} ===")
 
-    print(f"\n=== 處理 {city} ===")
+        try:
+            session = login(email, password)
+            print("✅ 登入成功")
 
-    try:
-        login(session, email, password)
+            current_filename = f"{this_date}專員班表-{city}.xls"
+            next_filename = f"{next_date}專員班表-{city}.xls"
 
-        current_filename = f"{this_date}專員班表-{city}.xls"
-        next_filename = f"{next_date}專員班表-{city}.xls"
+            export_cleaner_schedule(session, this_month, city, current_filename)
+            export_cleaner_schedule(session, next_month, city, next_filename)
 
-        export_cleaner_schedule(session, this_month, city, current_filename)
-        export_cleaner_schedule(session, next_month, city, next_filename)
+            print(f"✅ {city} 全部完成")
 
-        print(f"✅ {city} 全部完成")
-
-    except Exception as e:
-        print(f"❌ {city} 失敗：{e}")
-        raise
+        except Exception as e:
+            print(f"❌ {city} 失敗：{e}")
+            raise
 
 
 if __name__ == "__main__":
