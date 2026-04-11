@@ -1,6 +1,6 @@
 import os
 import tempfile
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 
 import requests
 import streamlit as st
@@ -17,43 +17,43 @@ HEADERS = {
     "Content-Type": "application/x-www-form-urlencoded",
 }
 
-# 👉 你的專員個資資料夾
+# Google Drive
 GDRIVE_FOLDER_ID = "199wJef-ISEP5bsSWaSseCAHynoVRE26e"
 GDRIVE_SCOPES = ["https://www.googleapis.com/auth/drive"]
 
-
-# =========================
-# 取得地區帳密（從 opapp 傳入）
-# =========================
-def get_account():
-    region = os.getenv("REGION_NAME")
-    email = os.getenv("REGION_EMAIL")
-    password = os.getenv("REGION_PASSWORD")
-
-    if not region:
-        raise RuntimeError("未指定地區")
-
-    if not email or not password:
-        raise RuntimeError(f"{region} 找不到帳密")
-
-    return region, email, password
+# 台北時區
+TZ = timezone(timedelta(hours=8))
 
 
-# =========================
-# 登入
-# =========================
-def login(session, email, password):
+def load_accounts():
+    return [
+        (
+            "台北",
+            st.secrets["accounts"]["taipei"]["email"],
+            st.secrets["accounts"]["taipei"]["password"],
+        ),
+        (
+            "台中",
+            st.secrets["accounts"]["taichung"]["email"],
+            st.secrets["accounts"]["taichung"]["password"],
+        ),
+    ]
+
+
+def login(email: str, password: str) -> requests.Session:
+    session = requests.Session()
+
     res = session.get(LOGIN_URL, headers=HEADERS, allow_redirects=True)
     soup = BeautifulSoup(res.text, "html.parser")
 
     token_input = soup.find("input", {"name": "_token"})
     if not token_input:
-        raise RuntimeError("找不到 _token")
+        raise RuntimeError("找不到 _token，無法登入")
 
-    token = token_input.get("value")
+    csrf_token = token_input.get("value")
 
     payload = {
-        "_token": token,
+        "_token": csrf_token,
         "email": email,
         "password": password,
     }
@@ -68,24 +68,30 @@ def login(session, email, password):
     if "login" in login_res.url.lower():
         raise RuntimeError(f"{email} 登入失敗")
 
-    print(f"✅ 登入成功：{email}")
+    return session
 
 
-# =========================
-# Google Drive
-# =========================
+def get_today_stamp():
+    now = datetime.now(TZ)
+    return now.strftime("%Y%m%d")
+
+
 def get_drive_service():
-    creds_dict = dict(st.secrets["GOOGLE_SERVICE_ACCOUNT"])
+    try:
+        creds_dict = dict(st.secrets["GOOGLE_SERVICE_ACCOUNT"])
 
-    creds = service_account.Credentials.from_service_account_info(
-        creds_dict,
-        scopes=GDRIVE_SCOPES,
-    )
+        creds = service_account.Credentials.from_service_account_info(
+            creds_dict,
+            scopes=GDRIVE_SCOPES,
+        )
 
-    return build("drive", "v3", credentials=creds)
+        return build("drive", "v3", credentials=creds)
+
+    except Exception as e:
+        raise RuntimeError(f"Google Drive 初始化失敗：{e}")
 
 
-def upload_to_gdrive(local_path):
+def upload_to_gdrive(local_path: str):
     service = get_drive_service()
     filename = os.path.basename(local_path)
 
@@ -107,13 +113,7 @@ def upload_to_gdrive(local_path):
     return created["id"]
 
 
-# =========================
-# 匯出專員個資
-# =========================
-def export_staff_info(session, city):
-    today_str = datetime.today().strftime("%Y%m%d")
-    filename = f"{today_str}專員系統個資-{city}.xlsx"
-
+def export_staff_info(session: requests.Session, city: str, filename: str):
     res = session.get(EXPORT_URL, headers=HEADERS, allow_redirects=True)
 
     content_type = res.headers.get("Content-Type", "")
@@ -135,23 +135,25 @@ def export_staff_info(session, city):
         upload_to_gdrive(full_path)
 
 
-# =========================
-# 主程式
-# =========================
 def main():
-    city, email, password = get_account()
-    session = requests.Session()
+    today_stamp = get_today_stamp()
+    regions = load_accounts()
 
-    print(f"\n=== 處理 {city} ===")
+    for city, email, password in regions:
+        print(f"\n=== 處理 {city} ===")
 
-    try:
-        login(session, email, password)
-        export_staff_info(session, city)
-        print(f"✅ {city} 完成")
+        try:
+            session = login(email, password)
+            print("✅ 登入成功")
 
-    except Exception as e:
-        print(f"❌ {city} 失敗：{e}")
-        raise
+            filename = f"{today_stamp}專員系統個資-{city}.xlsx"
+            export_staff_info(session, city, filename)
+
+            print(f"✅ {city} 全部完成")
+
+        except Exception as e:
+            print(f"❌ {city} 失敗：{e}")
+            raise
 
 
 if __name__ == "__main__":
