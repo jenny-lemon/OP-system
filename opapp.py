@@ -345,12 +345,10 @@ for k, v in {"page": "排程主控表", "region": None, "result_label": None, "r
 # ──────────────────────────────────────────────
 DEFAULT_CONFIG = {
     "daily": [
-        {"id": "d1", "label": "排班統計表",   "script": "排班統計表.py",   "args": [],       "schedule": "01:00", "all_regions": False},
-        {"id": "d2", "label": "專員班表",     "script": "專員班表.py",     "args": [],       "schedule": "02:00", "all_regions": False},
-        {"id": "d3", "label": "專員個資",     "script": "專員系統個資.py", "args": [],       "schedule": "02:30", "all_regions": False},
-        {"id": "d4", "label": "當月次月訂單", "script": "當月次月訂單.py", "args": [],       "schedule": "08:00", "all_regions": True},
-        {"id": "d5", "label": "業績報表 08",  "script": "業績報表.py",     "args": ["0800"], "schedule": "08:00", "all_regions": True},
-        {"id": "d6", "label": "業績報表 18",  "script": "業績報表.py",     "args": ["1800"], "schedule": "18:00", "all_regions": True},
+        {"id": "d1", "label": "排班統計表", "script": "schedule_report.py", "args": [], "schedule": "01:00", "all_regions": False},
+        {"id": "d2", "label": "專員班表", "script": "staff_schedule.py", "args": [], "schedule": "02:00", "all_regions": False},
+        {"id": "d3", "label": "專員個資", "script": "staff_info.py", "args": [], "schedule": "02:30", "all_regions": False},
+        {"id": "d4", "label": "當月次月訂單", "script": "orders_report.py", "args": [], "schedule": "08:00", "all_regions": True},
     ],
     "monthly": [
         {"id": "m1", "label": "上半月訂單",  "script": "上下半月訂單.py", "args": ["1"], "schedule": "月初01日", "all_regions": True},
