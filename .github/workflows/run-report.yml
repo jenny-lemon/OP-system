@@ -33,6 +33,6 @@ jobs:
       - name: Run 排班統計表
         run: python 排班統計表.py
 
-      - - name: Setup Google credentials
+      - name: Setup Google credentials
         run: |
           echo '${{ secrets.GCP_KEY }}' > google_service_account.json
