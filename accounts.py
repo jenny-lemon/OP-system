@@ -1,6 +1,10 @@
 ACCOUNTS = {
-    "example": {
-        "email": "your_email@example.com",
-        "password": "your_password"
-    }
+    "台北": {
+        "email": "xxx",
+        "password": "xxx",
+    },
+    "台中": {
+        "email": "xxx",
+        "password": "xxx",
+    },
 }
