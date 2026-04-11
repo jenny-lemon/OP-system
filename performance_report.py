@@ -437,55 +437,61 @@ def build_region4_df(region2_df: pd.DataFrame) -> pd.DataFrame:
     ]]
 
 
+from openpyxl import Workbook, load_workbook
+from openpyxl.styles import Font, Alignment
+
+
+def write_df_to_ws(ws, df, start_row, start_col):
+    # header
+    for c_idx, col_name in enumerate(df.columns, start=start_col):
+        cell = ws.cell(row=start_row, column=c_idx, value=col_name)
+        cell.font = Font(bold=True)
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+
+    # body
+    for r_idx, row in enumerate(df.itertuples(index=False), start=start_row + 1):
+        for c_idx, value in enumerate(row, start=start_col):
+            ws.cell(row=r_idx, column=c_idx, value=value)
+
+
 def write_four_regions(output_path, df1, df2, df3, df4, sheet_name):
     if os.path.exists(output_path):
         wb = load_workbook(output_path)
     else:
         wb = Workbook()
-        default_ws = wb.active
-        wb.remove(default_ws)
+        # 保留預設 sheet，等下改名
+        ws0 = wb.active
+        ws0.title = sheet_name
 
     if sheet_name in wb.sheetnames:
-        ws_old = wb[sheet_name]
-        wb.remove(ws_old)
+        ws = wb[sheet_name]
+        # 清空舊內容
+        wb.remove(ws)
+        ws = wb.create_sheet(sheet_name)
+    else:
+        ws = wb.create_sheet(sheet_name)
 
-    ws = wb.create_sheet(sheet_name)
+    # 如果是新建 workbook 且第一張預設 sheet 不是我們要的，刪掉空白 sheet
+    for name in list(wb.sheetnames):
+        if name != sheet_name and wb[name].max_row == 1 and wb[name].max_column == 1 and wb[name]["A1"].value is None:
+            del wb[name]
 
-    # 先存空白檔，讓 pandas append
-    wb.save(output_path)
+    write_df_to_ws(ws, df1, start_row=1, start_col=1)   # A
+    write_df_to_ws(ws, df2, start_row=1, start_col=11)  # K
+    write_df_to_ws(ws, df3, start_row=1, start_col=21)  # U
+    write_df_to_ws(ws, df4, start_row=1, start_col=30)  # AD
 
-    with pd.ExcelWriter(
-        output_path,
-        engine="openpyxl",
-        mode="a",
-        if_sheet_exists="replace",
-    ) as writer:
-
-        df1.to_excel(writer, index=False, sheet_name=sheet_name, startrow=0, startcol=0)
-        df2.to_excel(writer, index=False, sheet_name=sheet_name, startrow=0, startcol=10)
-        df3.to_excel(writer, index=False, sheet_name=sheet_name, startrow=0, startcol=20)
-        df4.to_excel(writer, index=False, sheet_name=sheet_name, startrow=0, startcol=29)
-
-    wb = load_workbook(output_path)
-    ws = wb[sheet_name]
     ws.freeze_panes = "A2"
-
-    for row in ws.iter_rows(min_row=1, max_row=1):
-        for cell in row:
-            if cell.value is not None:
-                cell.font = Font(bold=True)
-                cell.alignment = Alignment(horizontal="center", vertical="center")
 
     for row in ws.iter_rows(min_row=2):
         for cell in row:
             if isinstance(cell.value, (int, float)):
-                if cell.column in [32, 34]:
+                if cell.column in [32, 34]:  # 本月佔比、次月佔比
                     cell.number_format = "0.00%"
                 else:
                     cell.number_format = "#,##0"
 
     wb.save(output_path)
-
 
 def find_drive_file_by_name(service, folder_id, filename):
     query = (
