@@ -22,7 +22,7 @@ CITY_ORDER = ["台北", "台中", "桃園", "新竹", "高雄"]
 tz = timezone(timedelta(hours=8))
 
 # 👉 Google Drive 資料夾（放每月報表）
-DRIVE_FOLDER_ID = "👉填你的資料夾ID"
+DRIVE_FOLDER_ID = "1_b2EjuCAZ6qdlzUjY_PiecbpV7MKBC2t"
 
 # 權限
 DRIVE_SCOPES = ["https://www.googleapis.com/auth/drive"]
