@@ -26,7 +26,7 @@ TZ = timezone(timedelta(hours=8))
 GDRIVE_SCOPES = ["https://www.googleapis.com/auth/drive"]
 
 # 👉 這裡填「上下半月訂單」主資料夾 ID
-ROOT_FOLDER_ID = "1TnV_tpDnaSwPDDvjq8AtGL6uRC0OwGUK"
+ROOT_FOLDER_ID = "1VCb_y-zBA7tm9SF1s7GeixZVweWteWIc"
 
 
 def load_accounts():
