@@ -378,10 +378,11 @@ for k, v in defaults.items():
 # ══════════════════════════════════════════════════
 DEFAULT_CONFIG = {
     "daily": [
-        {"id": "d1", "label": "排班統計表",  "script": "schedule_report.py", "args": [], "schedule": "01:00", "all_regions": False},
-        {"id": "d2", "label": "專員班表",    "script": "staff_schedule.py",  "args": [], "schedule": "02:00", "all_regions": False},
-        {"id": "d3", "label": "專員個資",    "script": "staff_info.py",      "args": [], "schedule": "02:30", "all_regions": False},
-        {"id": "d4", "label": "當月次月訂單","script": "orders_report.py",   "args": [], "schedule": "08:00", "all_regions": True},
+        {"id": "d1", "label": "排班統計表",  "script": "schedule_report.py", "args": [], "schedule": "01:00", "all_regions": True},
+        {"id": "d2", "label": "專員班表",    "script": "staff_schedule.py",  "args": [], "schedule": "01:10", "all_regions": True},
+        {"id": "d3", "label": "專員個資",    "script": "staff_info.py",      "args": [], "schedule": "01:20", "all_regions": True},
+        {"id": "d4", "label": "當月次月訂單","script": "orders_report.py",   "args": [], "schedule": "01:30", "all_regions": True},
+        {"id": "d5", "label": "業績報表",    "script": "performance_report.py", "args": [], "schedule": "01:40", "all_regions": True}
     ],
     "monthly": [
         {"id": "m1", "label": "上半月訂單",  "script": "上下半月訂單.py", "args": ["1"], "schedule": "月初01日", "all_regions": True},
@@ -390,7 +391,7 @@ DEFAULT_CONFIG = {
         {"id": "m4", "label": "預收",        "script": "預收.py",         "args": [],    "schedule": "月底",    "all_regions": False},
         {"id": "m5", "label": "儲值金結算",  "script": "儲值金結算.py",   "args": [],    "schedule": "月底",    "all_regions": False},
         {"id": "m6", "label": "儲值金預收",  "script": "儲值金預收.py",   "args": [],    "schedule": "月底",    "all_regions": False},
-    ],
+   ],
     "log_files": {},
 }
 
