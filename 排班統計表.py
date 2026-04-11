@@ -1,18 +1,3 @@
-"""
-opapp.py  ──  營運報表控制台 v3
-Features:
-  • 固定頂部導覽列（捲動後仍固定）
-  • 地區切換，帳密從 accounts.py 讀取（本機，不上傳雲端）
-  • 排程主控表：每日 / 月排程執行狀態一覽
-  • 手動執行：單項 / 批次，帶入地區帳密
-  • 輸出報表：掃描 output/ 目錄，顯示檔案狀態
-  • 腳本管理：線上新增 / 修改 / 刪除 / 編輯腳本內容
-
-帳密安全做法：
-  accounts.py 加入 .gitignore → 永遠不上傳雲端
-  opapp.py 只做 from accounts import ACCOUNTS，可以安全上傳
-"""
-
 import os
 import tempfile
 from datetime import datetime
@@ -22,8 +7,6 @@ from bs4 import BeautifulSoup
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
-
-from accounts import ACCOUNTS
 
 LOGIN_URL = "https://backend.lemonclean.com.tw/login"
 EXPORT_BASE = "https://backend.lemonclean.com.tw/schedule/export_times"
@@ -40,6 +23,20 @@ GOOGLE_SERVICE_ACCOUNT_FILE = os.getenv(
     "google_service_account.json",
 )
 GDRIVE_SCOPES = ["https://www.googleapis.com/auth/drive"]
+
+
+def get_selected_region_account():
+    region_name = os.getenv("REGION_NAME", "").strip()
+    region_email = os.getenv("REGION_EMAIL", "").strip()
+    region_password = os.getenv("REGION_PASSWORD", "").strip()
+
+    if not region_name:
+        raise RuntimeError("未指定地區，請先在介面選擇台北或台中")
+
+    if not region_email or not region_password:
+        raise RuntimeError(f"{region_name} 找不到帳密，請檢查 Streamlit secrets 或地區設定")
+
+    return region_name, region_email, region_password
 
 
 def login(email: str, password: str) -> requests.Session:
@@ -154,25 +151,26 @@ def export_schedule(session: requests.Session, month: str, filename: str):
 
 
 def main():
+    city, email, password = get_selected_region_account()
     this_month, next_month, today_stamp, next_month_stamp = get_month_strings()
 
-    for city in ["台北", "台中"]:
-        acc = ACCOUNTS[city]
-        print(f"\n=== 處理 {city} ===")
+    print(f"\n=== 處理 {city} ===")
 
-        try:
-            session = login(acc["email"], acc["password"])
-            print("✅ 登入成功")
+    try:
+        session = login(email, password)
+        print("✅ 登入成功")
 
-            current_filename = f"排班統計表{today_stamp}-{city}.xlsx"
-            next_filename = f"排班統計表{next_month_stamp}-{city}.xlsx"
+        current_filename = f"排班統計表{today_stamp}-{city}.xlsx"
+        next_filename = f"排班統計表{next_month_stamp}-{city}.xlsx"
 
-            export_schedule(session, this_month, current_filename)
-            export_schedule(session, next_month, next_filename)
+        export_schedule(session, this_month, current_filename)
+        export_schedule(session, next_month, next_filename)
 
-        except Exception as e:
-            print(f"❌ {city} 失敗：{e}")
-            raise
+        print(f"✅ {city} 全部完成")
+
+    except Exception as e:
+        print(f"❌ {city} 失敗：{e}")
+        raise
 
 
 if __name__ == "__main__":
