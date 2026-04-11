@@ -403,6 +403,7 @@ import subprocess
 
 def run_script(script_name, args=None, region=None):
     args = args or []
+
     path = BASE_DIR / script_name
 
     if not path.exists():
@@ -415,13 +416,14 @@ def run_script(script_name, args=None, region=None):
 
     env = os.environ.copy()
 
+    # 🔥 把帳密塞進環境變數
     if region and region in ACCOUNTS:
         acct = ACCOUNTS[region]
         env["REGION_EMAIL"] = acct.get("email", "")
         env["REGION_PASSWORD"] = acct.get("password", "")
         env["REGION_NAME"] = region
 
-    cmd = [PYTHON_BIN, str(path)] + [str(a) for a in args]
+    cmd = ["python", str(path)] + [str(a) for a in args]
 
     try:
         r = subprocess.run(
@@ -434,8 +436,8 @@ def run_script(script_name, args=None, region=None):
 
         return {
             "ok": r.returncode == 0,
-            "stdout": r.stdout or "",
-            "stderr": r.stderr or "",
+            "stdout": r.stdout,
+            "stderr": r.stderr,
             "cmd": " ".join(cmd),
         }
 
