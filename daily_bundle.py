@@ -1,37 +1,31 @@
 from auth import get_account, login
-
-# 之後會引入報表模組
-# 先用 print 模擬
-def run_schedule_stats(session, city):
-    print(f"{city} → 排班統計表")
-
-def run_cleaner_schedule(session, city):
-    print(f"{city} → 專員班表")
-
-def run_cleaner_data(session, city):
-    print(f"{city} → 專員個資")
-
-def run_order_report(session, city):
-    print(f"{city} → 訂單資料")
+from reports.schedule_stats import run_schedule_stats
 
 
-def run_city_bundle(city):
-    print(f"\n=== 開始 {city} ===")
-
+def run_city_bundle(city: str) -> list[dict]:
     acc = get_account(city)
     session = login(acc["email"], acc["password"])
 
-    run_schedule_stats(session, city)
-    run_cleaner_schedule(session, city)
-    run_cleaner_data(session, city)
-    run_order_report(session, city)
+    results = []
+    results.extend(run_schedule_stats(session, city))
 
-    print(f"=== 結束 {city} ===")
+    return results
 
 
 def main():
+    all_results = []
+
     for city in ["台北", "台中"]:
-        run_city_bundle(city)
+        print(f"=== 開始 {city} ===")
+        city_results = run_city_bundle(city)
+        all_results.extend(city_results)
+
+        for item in city_results:
+            print(f"✅ {item['filename']} 上傳成功，file_id={item['file_id']}")
+
+        print(f"=== 結束 {city} ===")
+
+    return all_results
 
 
 if __name__ == "__main__":
