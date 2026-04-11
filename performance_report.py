@@ -460,7 +460,7 @@ def write_four_regions(output_path, df1, df2, df3, df4, sheet_name):
         mode="a",
         if_sheet_exists="replace",
     ) as writer:
-        writer.book = load_workbook(output_path)
+
         df1.to_excel(writer, index=False, sheet_name=sheet_name, startrow=0, startcol=0)
         df2.to_excel(writer, index=False, sheet_name=sheet_name, startrow=0, startcol=10)
         df3.to_excel(writer, index=False, sheet_name=sheet_name, startrow=0, startcol=20)
