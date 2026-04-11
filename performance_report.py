@@ -1,4 +1,6 @@
+import os
 import calendar
+import tempfile
 from datetime import datetime, timezone, timedelta
 
 import pandas as pd
@@ -7,6 +9,9 @@ import streamlit as st
 from bs4 import BeautifulSoup
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
+from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload
+from openpyxl import Workbook, load_workbook
+from openpyxl.styles import Font, Alignment
 
 # =========================
 # 基本設定
@@ -21,13 +26,10 @@ CITY_ORDER = ["台北", "台中", "桃園", "新竹", "高雄"]
 # 👉 台北時區（不用 pytz）
 tz = timezone(timedelta(hours=8))
 
-# 👉 Google Drive 資料夾（放每月報表）
-DRIVE_FOLDER_ID = "1bKvjmPNEbzGXOq5lFfykYbhkNIyzMw9v"
+# 👉 Google Drive 資料夾
+DRIVE_FOLDER_ID = "👉填你的資料夾ID"
 
-# 權限
-DRIVE_SCOPES = ["https://www.googleapis.com/auth/drive"]
-SHEET_SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
-
+SCOPES = ["https://www.googleapis.com/auth/drive"]
 
 # =========================
 # 帳密
@@ -48,6 +50,62 @@ def load_accounts():
             "password": st.secrets["accounts"][key]["password"],
         }
     return accounts
+
+
+# =========================
+# Google Drive
+# =========================
+def get_drive():
+    creds = service_account.Credentials.from_service_account_info(
+        dict(st.secrets["GOOGLE_SERVICE_ACCOUNT"]),
+        scopes=SCOPES,
+    )
+    return build("drive", "v3", credentials=creds)
+
+
+def find_file(drive, filename):
+    q = f"name='{filename}' and '{DRIVE_FOLDER_ID}' in parents and trashed=false"
+
+    res = drive.files().list(
+        q=q,
+        fields="files(id,name)",
+        supportsAllDrives=True,
+        includeItemsFromAllDrives=True,
+    ).execute()
+
+    files = res.get("files", [])
+    return files[0]["id"] if files else None
+
+
+def download_file(drive, file_id, path):
+    request = drive.files().get_media(fileId=file_id, supportsAllDrives=True)
+    fh = open(path, "wb")
+
+    downloader = MediaIoBaseDownload(fh, request)
+    done = False
+    while not done:
+        _, done = downloader.next_chunk()
+
+    fh.close()
+
+
+def upload_file(drive, path, file_id=None):
+    media = MediaFileUpload(path, resumable=True)
+
+    if file_id:
+        drive.files().update(
+            fileId=file_id,
+            media_body=media,
+            supportsAllDrives=True,
+        ).execute()
+        print("☁️ 已更新 Excel")
+    else:
+        drive.files().create(
+            body={"name": os.path.basename(path), "parents": [DRIVE_FOLDER_ID]},
+            media_body=media,
+            supportsAllDrives=True,
+        ).execute()
+        print("☁️ 已上傳 Excel")
 
 
 # =========================
@@ -74,68 +132,6 @@ def login(session, email, password):
 
 
 # =========================
-# Google API
-# =========================
-def get_creds(scopes):
-    return service_account.Credentials.from_service_account_info(
-        dict(st.secrets["GOOGLE_SERVICE_ACCOUNT"]),
-        scopes=scopes,
-    )
-
-
-def get_drive():
-    return build("drive", "v3", credentials=get_creds(DRIVE_SCOPES))
-
-
-def get_sheets():
-    return build("sheets", "v4", credentials=get_creds(SHEET_SCOPES))
-
-
-# =========================
-# 每月 Sheet
-# =========================
-def get_month_title():
-    now = datetime.now(tz)
-    return f"業績報表_{now.strftime('%Y-%m')}"
-
-
-def find_sheet(drive, title):
-    q = (
-        f"name='{title}' and "
-        f"mimeType='application/vnd.google-apps.spreadsheet' and "
-        f"'{DRIVE_FOLDER_ID}' in parents and trashed=false"
-    )
-
-    res = drive.files().list(q=q, fields="files(id,name)").execute()
-    files = res.get("files", [])
-    return files[0]["id"] if files else None
-
-
-def create_sheet(drive, title):
-    file = {
-        "name": title,
-        "mimeType": "application/vnd.google-apps.spreadsheet",
-        "parents": [DRIVE_FOLDER_ID],
-    }
-
-    res = drive.files().create(body=file, fields="id,name").execute()
-    print(f"🆕 建立：{title}")
-    return res["id"]
-
-
-def get_or_create_sheet():
-    drive = get_drive()
-    title = get_month_title()
-
-    sid = find_sheet(drive, title)
-    if sid:
-        print(f"📄 使用：{title}")
-        return sid
-
-    return create_sheet(drive, title)
-
-
-# =========================
 # 日期區間
 # =========================
 def get_ranges():
@@ -157,17 +153,8 @@ def get_ranges():
 
 
 # =========================
-# API
+# 抓數字（簡化版）
 # =========================
-def build_url(start, end):
-    params = {
-        "clean_date_s": start,
-        "clean_date_e": end,
-        "purchase_status": "1",
-    }
-    return requests.Request("GET", PURCHASE_URL, params=params).prepare().url
-
-
 def parse_total(html):
     soup = BeautifulSoup(html, "html.parser")
     total = 0
@@ -182,49 +169,44 @@ def parse_total(html):
 
 
 # =========================
-# Sheet寫入
+# 寫 Excel
 # =========================
-def ensure_tab(service, sid, name):
-    meta = service.spreadsheets().get(spreadsheetId=sid).execute()
-    tabs = [s["properties"]["title"] for s in meta["sheets"]]
+def write_excel(path, df, sheet_name):
+    if os.path.exists(path):
+        wb = load_workbook(path)
+    else:
+        wb = Workbook()
+        wb.remove(wb.active)
 
-    if name in tabs:
-        return
+    if sheet_name in wb.sheetnames:
+        wb.remove(wb[sheet_name])
 
-    service.spreadsheets().batchUpdate(
-        spreadsheetId=sid,
-        body={"requests": [{"addSheet": {"properties": {"title": name}}}]},
-    ).execute()
+    ws = wb.create_sheet(sheet_name)
 
+    ws.append(df.columns.tolist())
 
-def write_sheet(rows):
-    sid = get_or_create_sheet()
-    service = get_sheets()
+    for _, row in df.iterrows():
+        ws.append(row.tolist())
 
-    now = datetime.now(tz)
-    tab = now.strftime("%m-%d_%H%M")
+    ws.freeze_panes = "A2"
 
-    ensure_tab(service, sid, tab)
+    for row in ws.iter_rows(min_row=1, max_row=1):
+        for cell in row:
+            cell.font = Font(bold=True)
 
-    service.spreadsheets().values().update(
-        spreadsheetId=sid,
-        range=f"{tab}!A1",
-        valueInputOption="USER_ENTERED",
-        body={"values": rows},
-    ).execute()
-
-    print(f"📊 已寫入：{tab}")
+    wb.save(path)
 
 
 # =========================
 # 主程式
 # =========================
 def main():
-    print("🔥 業績報表（Sheet版）")
+    print("🔥 業績報表（Excel版）")
 
     now = datetime.now(tz)
-    date = now.strftime("%Y-%m-%d")
-    time = now.strftime("%H:%M")
+
+    sheet_name = now.strftime("%m-%d_%H%M")
+    filename = f"業績報表_{now.strftime('%Y-%m')}.xlsx"
 
     (m_start, m_end), (n_start, n_end) = get_ranges()
 
@@ -240,22 +222,29 @@ def main():
         try:
             login(session, acc["email"], acc["password"])
 
-            bm = parse_total(session.get(build_url(m_start, m_end)).text)
-            nm = parse_total(session.get(build_url(n_start, n_end)).text)
+            bm = parse_total(session.get(PURCHASE_URL).text)
+            nm = parse_total(session.get(PURCHASE_URL).text)
 
-            result.append([date, time, city, bm, nm])
+            result.append([city, bm, nm])
 
         except Exception as e:
             print(f"❌ {city}：{e}")
 
-    df = pd.DataFrame(result, columns=["日期", "時間", "城市", "本月", "次月"])
+    df = pd.DataFrame(result, columns=["城市", "本月", "次月"])
 
-    total = df["本月"].sum()
-    df["佔比"] = df["本月"] / total if total else 0
+    drive = get_drive()
 
-    rows = [df.columns.tolist()] + df.values.tolist()
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, filename)
 
-    write_sheet(rows)
+        file_id = find_file(drive, filename)
+
+        if file_id:
+            download_file(drive, file_id, path)
+
+        write_excel(path, df, sheet_name)
+
+        upload_file(drive, path, file_id)
 
     print("✅ 完成")
 
