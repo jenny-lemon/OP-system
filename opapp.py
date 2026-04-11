@@ -402,7 +402,6 @@ def record_run(key, ok, stdout, stderr):
 import subprocess
 
 def run_script(script_name, args=None, region=None):
-    print("DEBUG NEW run_script loaded")
     import subprocess
 
     args = args or []
@@ -424,22 +423,29 @@ def run_script(script_name, args=None, region=None):
         env["REGION_PASSWORD"] = acct.get("password", "")
         env["REGION_NAME"] = region
 
-    cmd = ["python", str(path)] + [str(a) for a in args]
+    cmd = [PYTHON_BIN, str(path)] + [str(a) for a in args]
 
-    r = subprocess.run(
-        cmd,
-        capture_output=True,
-        text=True,
-        cwd=str(BASE_DIR),
-        env=env,
-    )
-
-    return {
-        "ok": r.returncode == 0,
-        "stdout": r.stdout,
-        "stderr": r.stderr,
-        "cmd": " ".join(cmd),
-    }
+    try:
+        r = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            cwd=str(BASE_DIR),
+            env=env,
+        )
+        return {
+            "ok": r.returncode == 0,
+            "stdout": r.stdout or "",
+            "stderr": r.stderr or "",
+            "cmd": " ".join(cmd),
+        }
+    except Exception as e:
+        return {
+            "ok": False,
+            "stdout": "",
+            "stderr": str(e),
+            "cmd": " ".join(cmd),
+        }
     
 def do_run_job(job, region):
     """執行 job，支援全區依序。回傳 [(地區, result), ...]。"""
