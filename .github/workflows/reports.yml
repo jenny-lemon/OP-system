@@ -1,0 +1,137 @@
+import json
+import os
+import subprocess
+from datetime import datetime, timezone, timedelta
+from pathlib import Path
+
+TZ = timezone(timedelta(hours=8))
+
+CONFIG = {
+    "daily": [
+        {"id": "d1", "label": "排班統計表", "script": "schedule_report.py", "args": [], "schedule": "01:10"},
+        {"id": "d2", "label": "專員班表", "script": "staff_schedule.py", "args": [], "schedule": "01:20"},
+        {"id": "d3", "label": "專員個資", "script": "staff_info.py", "args": [], "schedule": "01:30"},
+        {"id": "d4", "label": "當月次月訂單", "script": "orders_report.py", "args": [], "schedule": "01:40"},
+        {"id": "d5", "label": "業績報表", "script": "performance_report.py", "args": [], "schedule": "08:00"},
+    ],
+    "monthly": [
+        {"id": "m1", "label": "上半月訂單", "script": "half_month_orders.py", "args": ["1"], "schedule": "每月15日18:15"},
+        {"id": "m2", "label": "下半月訂單", "script": "half_month_orders.py", "args": ["2"], "schedule": "每月底18:15"},
+        {"id": "m3", "label": "已退款", "script": "refund_report.py", "args": [], "schedule": "月底18:30"},
+        {"id": "m4", "label": "預收", "script": "prepaid_report.py", "args": [], "schedule": "月初00:10"},
+        {"id": "m5", "label": "儲值金結算", "script": "stored_value_settlement.py", "args": [], "schedule": "月初00:20"},
+        {"id": "m6", "label": "儲值金預收", "script": "stored_value_prepaid.py", "args": [], "schedule": "月初00:30"},
+    ],
+}
+
+
+def is_last_day(dt: datetime) -> bool:
+    tomorrow = dt + timedelta(days=1)
+    return tomorrow.month != dt.month
+
+
+def match_job(now: datetime):
+    hhmm = now.strftime("%H:%M")
+    day = now.day
+
+    for job in CONFIG["daily"]:
+        if job["schedule"] == hhmm:
+            return job
+
+    for job in CONFIG["monthly"]:
+        s = job["schedule"]
+
+        if s == "每月15日18:15" and day == 15 and hhmm == "18:15":
+            return job
+
+        if s == "每月底18:15" and is_last_day(now) and hhmm == "18:15":
+            return job
+
+        if s == "月底18:30" and is_last_day(now) and hhmm == "18:30":
+            return job
+
+        if s == "月初00:10" and day == 1 and hhmm == "00:10":
+            return job
+
+        if s == "月初00:20" and day == 1 and hhmm == "00:20":
+            return job
+
+        if s == "月初00:30" and day == 1 and hhmm == "00:30":
+            return job
+
+    return None
+
+
+def write_secrets_files():
+    gsa = os.environ.get("GOOGLE_SERVICE_ACCOUNT")
+    accounts_json = os.environ.get("ACCOUNTS_JSON")
+
+    if not gsa:
+        raise RuntimeError("缺少 GOOGLE_SERVICE_ACCOUNT secret")
+    if not accounts_json:
+        raise RuntimeError("缺少 ACCOUNTS_JSON secret")
+
+    os.makedirs(".streamlit", exist_ok=True)
+
+    accounts = json.loads(accounts_json)
+    gsa_obj = json.loads(gsa)
+
+    lines = []
+
+    lines.append("[GOOGLE_SERVICE_ACCOUNT]")
+    for k, v in gsa_obj.items():
+        if isinstance(v, str):
+            v = v.replace("\\", "\\\\").replace('"', '\\"')
+            lines.append(f'{k} = "{v}"')
+        elif isinstance(v, bool):
+            lines.append(f"{k} = {'true' if v else 'false'}")
+        else:
+            lines.append(f"{k} = {json.dumps(v)}")
+
+    lines.append("")
+    lines.append("[accounts.taipei]")
+    lines.append(f'email = "{accounts["taipei"]["email"]}"')
+    lines.append(f'password = "{accounts["taipei"]["password"]}"')
+
+    lines.append("")
+    lines.append("[accounts.taichung]")
+    lines.append(f'email = "{accounts["taichung"]["email"]}"')
+    lines.append(f'password = "{accounts["taichung"]["password"]}"')
+
+    lines.append("")
+    lines.append("[accounts.taoyuan]")
+    lines.append(f'email = "{accounts["taoyuan"]["email"]}"')
+    lines.append(f'password = "{accounts["taoyuan"]["password"]}"')
+
+    lines.append("")
+    lines.append("[accounts.hsinchu]")
+    lines.append(f'email = "{accounts["hsinchu"]["email"]}"')
+    lines.append(f'password = "{accounts["hsinchu"]["password"]}"')
+
+    lines.append("")
+    lines.append("[accounts.kaohsiung]")
+    lines.append(f'email = "{accounts["kaohsiung"]["email"]}"')
+    lines.append(f'password = "{accounts["kaohsiung"]["password"]}"')
+
+    Path(".streamlit/secrets.toml").write_text("\n".join(lines), encoding="utf-8")
+
+
+def main():
+    now = datetime.now(TZ).replace(second=0, microsecond=0)
+    print(f"台北時間：{now:%Y-%m-%d %H:%M}")
+
+    job = match_job(now)
+    if not job:
+        print("這個時間沒有對應排程，結束。")
+        return
+
+    print(f"開始執行：{job['label']} -> {job['script']} {job['args']}")
+
+    write_secrets_files()
+
+    cmd = ["python", job["script"], *job["args"]]
+    subprocess.run(cmd, check=True)
+
+
+if __name__ == "__main__":
+    main()
