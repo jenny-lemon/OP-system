@@ -12,7 +12,7 @@ from googleapiclient.http import MediaFileUpload
 LOGIN_URL = "https://backend.lemonclean.com.tw/login"
 
 # 🔥 👉 這裡改成你的業績報表 API
-EXPORT_URL = "https://backend.lemonclean.com.tw/xxxx/export_performance"
+EXPORT_URL = "EXPORT_URL = "https://backend.lemonclean.com.tw/purchase"
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0",
