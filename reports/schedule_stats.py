@@ -1,4 +1,7 @@
 from datetime import datetime
+from zoneinfo import ZoneInfo
+
+import streamlit as st
 
 from gdrive import upload_bytes_to_gdrive
 
@@ -9,12 +12,12 @@ HEADERS = {
     "Content-Type": "application/x-www-form-urlencoded",
 }
 
-# 你給的 Google Drive 資料夾 ID
-FOLDER_ID = "1cNWX1eL6SzkjJH8qQQyoz6cUoFHoVrRq"
+TZ = ZoneInfo("Asia/Taipei")
+FOLDER_ID = st.secrets["drive"]["schedule_report_folder_id"]
 
 
 def get_month_strings():
-    today = datetime.today()
+    today = datetime.now(TZ)
     this_month = today.strftime("%Y-%m")
     today_stamp = today.strftime("%Y%m%d")
 
@@ -53,8 +56,8 @@ def export_schedule(session, month: str, filename: str) -> str:
 def run_schedule_stats(session, city: str) -> list[dict]:
     this_month, next_month, today_stamp, next_month_stamp = get_month_strings()
 
-    current_filename = f"排班統計表{today_stamp}-{city}.xlsx"
-    next_filename = f"排班統計表{next_month_stamp}-{city}.xlsx"
+    current_filename = f"schedule_report_{today_stamp}_{city}.xlsx"
+    next_filename = f"schedule_report_{next_month_stamp}_{city}.xlsx"
 
     current_file_id = export_schedule(session, this_month, current_filename)
     next_file_id = export_schedule(session, next_month, next_filename)
