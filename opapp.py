@@ -310,10 +310,10 @@ if not IS_CLI_MODE:
 # =========================================================
 DEFAULT_CONFIG = {
     "daily": [
-        {"id": "d1", "label": "排班統計表",   "script": "schedule_report.py",       "args": [],    "schedule": "01:10",       "all_regions": True, "enabled": True},
-        {"id": "d2", "label": "專員班表",     "script": "staff_schedule.py",        "args": [],    "schedule": "01:20",       "all_regions": True, "enabled": True},
-        {"id": "d3", "label": "專員個資",     "script": "staff_info.py",            "args": [],    "schedule": "01:30",       "all_regions": True, "enabled": True},
-        {"id": "d4", "label": "當月次月訂單", "script": "orders_report.py",         "args": [],    "schedule": "01:40",       "all_regions": True, "enabled": True},
+        {"id": "d1", "label": "排班統計表",   "script": "schedule_report.py",       "args": [],    "schedule": "01:10",       "all_regions": False, "enabled": True},
+        {"id": "d2", "label": "專員班表",     "script": "staff_schedule.py",        "args": [],    "schedule": "01:20",       "all_regions": False, "enabled": True},
+        {"id": "d3", "label": "專員個資",     "script": "staff_info.py",            "args": [],    "schedule": "01:30",       "all_regions": False, "enabled": True},
+        {"id": "d4", "label": "當月次月訂單", "script": "orders_report.py",         "args": [],    "schedule": "01:40",       "all_regions": False, "enabled": True},
         {"id": "d5", "label": "業績報表",     "script": "performance_report.py",    "args": [],    "schedule": "08:00",       "all_regions": True, "enabled": True},
     ],
     "monthly": [
