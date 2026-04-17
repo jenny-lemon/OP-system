@@ -163,7 +163,7 @@ LAUNCHD_STDERR_MAP = {
     "com.jenny.monthend": BASE_DIR / "launchd_monthend_stderr.log",
 }
 
-NAV_PAGES = ["排程主控表", "手動執行", "Log 監控", "輸出報表", "腳本管理", "排程設定", "業績報表"]
+NAV_PAGES = ["主控表", "手動", "Log", "輸出", "腳本", "排程", "業績"]
 NAV_ICONS = ["📋", "▶️", "📄", "📂", "⚙️", "⏰", "📊"]
 
 # ══════════════════════════════════════════════════
