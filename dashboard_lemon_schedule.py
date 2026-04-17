@@ -22,6 +22,7 @@ from paths import (
     PATH_SCHEDULE,
     PATH_VIP,
 )
+
 from 業績報表 import (
     generate_sales_report,
     load_execution_log_for_current_month,
@@ -162,9 +163,8 @@ LAUNCHD_STDERR_MAP = {
     "com.jenny.monthend": BASE_DIR / "launchd_monthend_stderr.log",
 }
 
-NAV_PAGES = ["排程主控表", "手動執行", "Log 監控", "輸出報表", "腳本管理", "業績報表"]
-NAV_ICONS = ["📋", "▶️", "📄", "📂", "⚙️", "📊"]
-
+NAV_PAGES = ["排程主控表", "手動執行", "Log 監控", "輸出報表", "腳本管理", "排程設定", "業績報表"]
+NAV_ICONS = ["📋", "▶️", "📄", "📂", "⚙️", "⏰", "📊"]
 
 # ══════════════════════════════════════════════════
 # 工具函式
@@ -460,10 +460,6 @@ def open_in_finder(path: Path):
 # ─────────────────────────────────────────
 # 業績報表工具
 # ─────────────────────────────────────────
-def sales_file_exists(path):
-    return os.path.exists(path)
-
-
 def load_sales_latest_payload():
     df4_path = os.path.join(LATEST_DIR, "df4.csv")
     daily_path = os.path.join(LATEST_DIR, "daily_df.csv")
@@ -477,17 +473,14 @@ def load_sales_latest_payload():
         "email_html": "",
     }
 
-    if sales_file_exists(df4_path):
+    if os.path.exists(df4_path):
         payload["df4"] = pd.read_csv(df4_path, encoding="utf-8-sig")
-
-    if sales_file_exists(daily_path):
+    if os.path.exists(daily_path):
         payload["daily_df"] = pd.read_csv(daily_path, encoding="utf-8-sig")
-
-    if sales_file_exists(meta_path):
+    if os.path.exists(meta_path):
         with open(meta_path, "r", encoding="utf-8") as f:
             payload["meta"] = json.load(f)
-
-    if sales_file_exists(html_path):
+    if os.path.exists(html_path):
         with open(html_path, "r", encoding="utf-8") as f:
             payload["email_html"] = f.read()
 
@@ -511,7 +504,6 @@ def sales_fmt_pct(x):
 def style_sales_df4(df):
     if df.empty:
         return df
-
     out = df.copy()
     for col in ["本月加總", "次月加總", "本月家電加總", "次月家電加總", "儲值金"]:
         if col in out.columns:
@@ -525,7 +517,6 @@ def style_sales_df4(df):
 def style_sales_daily(df):
     if df.empty:
         return df
-
     out = df.copy()
     for col in out.columns:
         if col.endswith("業績") or col == "全區合計":
@@ -538,7 +529,6 @@ def style_sales_daily(df):
 def style_sales_exec(df):
     if df.empty:
         return df
-
     out = df.copy()
     for col in ["本月加總", "次月加總", "本月家電加總", "次月家電加總", "儲值金"]:
         if col in out.columns:
@@ -549,7 +539,6 @@ def style_sales_exec(df):
 def style_sales_history(df):
     if df.empty:
         return df
-
     out = df.copy()
     if "今日全區合計" in out.columns:
         out["今日全區合計"] = out["今日全區合計"].apply(sales_fmt_int)
@@ -559,7 +548,6 @@ def style_sales_history(df):
 def get_sales_total_row(df4):
     if df4.empty:
         return None
-
     total = df4[df4["城市"] == "加總"]
     if total.empty:
         return None
@@ -585,19 +573,13 @@ def sales_paginate_df(df, page_key, page_size=10):
     return df.iloc[start:end].copy(), page, total_pages, total_rows
 
 
-def reset_sales_pages():
-    st.session_state.sales_exec_page = 1
-    st.session_state.sales_history_page = 1
-    st.session_state.sales_delete_ids = []
-
-
 # ══════════════════════════════════════════════════
 # 頁面設定
 # ══════════════════════════════════════════════════
-st.set_page_config(page_title="Jenny 排程控制台", page_icon="🍋", layout="wide")
+st.set_page_config(page_title="營運報表控制台", page_icon="📊", layout="wide")
 
 if "page" not in st.session_state:
-    st.session_state.page = "主控表"
+    st.session_state.page = "排程主控表"
 if "sales_exec_page" not in st.session_state:
     st.session_state.sales_exec_page = 1
 if "sales_history_page" not in st.session_state:
@@ -610,39 +592,26 @@ if "sales_delete_ids" not in st.session_state:
 # ══════════════════════════════════════════════════
 st.markdown("""
 <style>
-html, body, [data-testid="stAppViewContainer"], [data-testid="stApp"] { background: #f0ede6 !important; font-family: sans-serif; color: #1c2333; }
+html, body, [data-testid="stAppViewContainer"], [data-testid="stApp"] { background: #f3f4f6 !important; font-family: sans-serif; color: #1c2333; }
 [data-testid="stHeader"], [data-testid="stSidebar"] { display: none !important; }
-.block-container { padding: 0 2.4rem 3rem !important; max-width: 1280px !important; }
-.topnav-wrapper { background: #0f2040; margin: 0 -2.4rem 0; padding: 0 28px; box-shadow: 0 2px 12px rgba(0,0,0,0.18); position: sticky; top: 0; z-index: 999; margin-bottom: 0; }
-.topnav-top { display: flex; align-items: center; height: 52px; gap: 0; }
-.topnav-brand { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
-.topnav-logo { font-size: 20px; line-height: 1; }
-.topnav-name { font-size: 14px; font-weight: 700; color: #e4edf8; white-space: nowrap; }
-.topnav-divider { width: 1px; height: 22px; background: rgba(255,255,255,0.1); margin: 0 20px; flex-shrink: 0; }
-.topnav-tagline, .topnav-time, .panel-tag, .panel-desc, .page-subtitle, .kpi-label, .task-name, .task-schedule, .task-time, .badge, .next-run-box { font-family: monospace; }
-.topnav-tagline { font-size: 10.5px; color: #2d4a66; letter-spacing: 0.12em; text-transform: uppercase; }
-.topnav-time { font-size: 11px; color: #3a5070; margin-left: auto; flex-shrink: 0; letter-spacing: 0.05em; }
-div[data-testid="stHorizontalBlock"]:has(div.nav-item-wrap) { background: #0f2040 !important; margin: 0 -2.4rem !important; padding: 0 20px !important; border-top: 1px solid rgba(255,255,255,0.06) !important; margin-bottom: 28px !important; gap: 0 !important; }
-.nav-item-wrap div[data-testid="stButton"] > button { height: 40px !important; padding: 0 14px !important; border-radius: 0 !important; border: none !important; border-bottom: 2px solid transparent !important; background: transparent !important; color: #5a7a9e !important; font-weight: 600 !important; font-size: 12.5px !important; box-shadow: none !important; }
-.nav-item-wrap.active div[data-testid="stButton"] > button { color: #93c5fd !important; border-bottom: 2px solid #60a5fa !important; }
-.panel { background: #ffffff; border: 1px solid #e8e4dd; border-radius: 16px; padding: 22px 24px 20px; margin-bottom: 18px; box-shadow: 0 1px 3px rgba(0,0,0,0.04), 0 4px 14px rgba(0,0,0,0.05); }
-.panel-head { display: flex; align-items: center; gap: 10px; margin-bottom: 18px; padding-bottom: 14px; border-bottom: 1px solid #f0ede6; }
-.panel-tag { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; color: #1d4ed8; background: rgba(29,78,216,0.07); border: 1px solid rgba(29,78,216,0.14); border-radius: 6px; padding: 4px 10px; }
-.panel-desc { font-size: 12.5px; color: #94a3b8; margin-left: auto; }
-.page-title { font-size: 22px; font-weight: 700; color: #0f2040; margin-bottom: 4px; }
-.page-subtitle { font-size: 12px; color: #8896b0; margin-bottom: 22px; letter-spacing: 0.03em; }
-.kpi-row { display: flex; gap: 14px; margin-bottom: 20px; }
-.kpi-card { flex: 1; background: #fff; border: 1px solid #e8e4dd; border-radius: 14px; padding: 18px 20px; position: relative; overflow: hidden; }
-.kpi-card::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px; }
-.kpi-card.blue::before { background: linear-gradient(90deg, #1d4ed8, #60a5fa); }
-.kpi-card.green::before { background: linear-gradient(90deg, #059669, #34d399); }
-.kpi-card.yellow::before { background: linear-gradient(90deg, #d97706, #fbbf24); }
-.kpi-card.red::before { background: linear-gradient(90deg, #dc2626, #f87171); }
-.kpi-label { font-size: 11px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: #94a3b8; margin-bottom: 8px; }
-.kpi-value { font-size: 30px; font-weight: 700; color: #0f2040; line-height: 1; }
-.kpi-sub { font-size: 11.5px; color: #94a3b8; margin-top: 5px; }
-.task-header-row { display: flex; align-items: center; padding: 8px 16px; margin-bottom: 8px; color: #7b8797; font-size: 11.5px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
-.task-time { font-size: 11px; color: #b0b8cc; width: 110px; flex-shrink: 0; text-align: right; }
+.block-container { padding: 0 2.4rem 3rem !important; max-width: 1800px !important; }
+.topbar { background: #fff; border: 1px solid #e5e7eb; border-radius: 18px; padding: 24px 28px; margin: 24px 0 28px; display:flex; align-items:center; justify-content:space-between; box-shadow: 0 4px 14px rgba(0,0,0,0.05); }
+.brand { display:flex; align-items:center; gap:18px; }
+.brand-title { font-size: 28px; font-weight: 800; color:#0f766e; }
+.brand-badge { border:1px solid #cbd5e1; border-radius: 999px; padding: 10px 18px; color:#94a3b8; font-weight:700; font-size:18px; }
+.clock { font-family: monospace; font-size: 20px; font-weight: 700; color:#475569; }
+.page-tabs button { height:110px !important; font-size:22px !important; font-weight:800 !important; border-radius:18px !important; border:3px solid #cbd5e1 !important; background:#fff !important; color:#0f172a !important; }
+.page-tabs .active button { border-color:#60a5fa !important; background:#eff6ff !important; }
+.panel { background: #ffffff; border: 1px solid #e5e7eb; border-radius: 18px; padding: 24px; margin-bottom: 20px; box-shadow: 0 4px 14px rgba(0,0,0,0.05); }
+.panel-title { font-size: 18px; font-weight: 800; color:#0f172a; margin-bottom:14px; }
+.page-title { font-size: 42px; font-weight: 900; color:#0f172a; margin-bottom:8px; }
+.page-subtitle { font-size: 18px; color:#94a3b8; margin-bottom:20px; letter-spacing: 0.08em; font-family: monospace; }
+.log-box { background: #0d1117; border-radius: 12px; padding: 16px 20px; font-family: monospace; font-size: 12.5px; line-height: 1.7; white-space: pre-wrap; word-break: break-all; max-height: 500px; overflow: auto; border: 1px solid #1e2a3a; }
+.log-err { color: #f87171; display: block; }
+.log-ok { color: #4ade80; display: block; }
+.log-warn { color: #fbbf24; display: block; }
+.log-info { color: #60a5fa; display: block; }
+.log-normal { color: #8b9ab0; display: block; }
 .badge { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; font-weight: 600; padding: 3px 10px; border-radius: 20px; white-space: nowrap; }
 .badge .bdot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
 .badge.green { background: rgba(5,150,105,0.1); border: 1px solid rgba(5,150,105,0.25); color: #065f46; }
@@ -653,46 +622,47 @@ div[data-testid="stHorizontalBlock"]:has(div.nav-item-wrap) { background: #0f204
 .badge.red .bdot { background: #ef4444; }
 .badge.gray { background: rgba(148,163,184,0.1); border: 1px solid rgba(148,163,184,0.25); color: #64748b; }
 .badge.gray .bdot { background: #94a3b8; }
-.log-box { background: #0d1117; border-radius: 12px; padding: 16px 20px; font-family: monospace; font-size: 12.5px; line-height: 1.7; white-space: pre-wrap; word-break: break-all; max-height: 500px; overflow: auto; border: 1px solid #1e2a3a; }
-.log-err { color: #f87171; display: block; }
-.log-ok { color: #4ade80; display: block; }
-.log-warn { color: #fbbf24; display: block; }
-.log-info { color: #60a5fa; display: block; }
-.log-normal { color: #8b9ab0; display: block; }
 .next-run-box { background: rgba(29,78,216,0.06); border: 1px solid rgba(29,78,216,0.15); border-radius: 10px; padding: 10px 16px; margin-top: 10px; font-size: 12.5px; color: #1d4ed8; display: flex; align-items: center; gap: 8px; }
-.sales-kpi-card { background: #fff; border: 1px solid #e8e4dd; border-radius: 14px; padding: 18px 20px; }
 </style>
 """, unsafe_allow_html=True)
 
-now_str = datetime.now().strftime("%Y/%m/%d  %H:%M")
+# ══════════════════════════════════════════════════
+# 頂部
+# ══════════════════════════════════════════════════
+now_str = datetime.now().strftime("%Y/%m/%d %H:%M 台北")
 st.markdown(
-    f"""<div class="topnav-wrapper"><div class="topnav-top"><div class="topnav-brand"><span class="topnav-logo">🍋</span><span class="topnav-name">Jenny 排程控制台</span></div><div class="topnav-divider"></div><span class="topnav-tagline">Schedule Dashboard</span><div class="topnav-time">🕐 {now_str}</div></div></div>""",
+    f"""
+    <div class="topbar">
+        <div class="brand">
+            <div class="brand-title">📊 營運報表控制台</div>
+            <div class="brand-badge">📍 未選地區</div>
+        </div>
+        <div class="clock">🕒 {now_str}</div>
+    </div>
+    """,
     unsafe_allow_html=True,
 )
 
-nav_cols = st.columns(len(NAV_PAGES) + 4)
+tab_cols = st.columns(len(NAV_PAGES))
 for i, (label, icon) in enumerate(zip(NAV_PAGES, NAV_ICONS)):
-    is_active = st.session_state.page == label
-    wrap_class = "nav-item-wrap active" if is_active else "nav-item-wrap"
-    with nav_cols[i]:
-        st.markdown(f'<div class="{wrap_class}">', unsafe_allow_html=True)
-        if st.button(f"{icon} {label}", key=f"nav_{label}"):
+    with tab_cols[i]:
+        if st.button(f"{icon} {label}", key=f"tab_{label}", use_container_width=True):
             st.session_state.page = label
             st.rerun()
-        st.markdown("</div>", unsafe_allow_html=True)
+
+st.divider()
 
 page = st.session_state.page
 cfg = load_config()
 status_map = get_launchd_status()
 
 # ══════════════════════════════════════════════════
-# 主控表
+# 排程主控表
 # ══════════════════════════════════════════════════
-if page == "主控表":
+if page == "排程主控表":
     st.markdown('<div class="page-title">排程主控表</div><div class="page-subtitle">SCHEDULE DASHBOARD</div>', unsafe_allow_html=True)
     main_log_text = read_last_lines(LOG_FILE, 300)
     task_data = []
-    count_ok = count_err = count_run = count_gray = 0
 
     for task in SCHEDULE_TASKS:
         stderr_path = LAUNCHD_STDERR_MAP.get(task["label"])
@@ -704,7 +674,7 @@ if page == "主控表":
             sched_text = (
                 f'每月 {sched["day"]} 日  {sched["hour"].zfill(2)}:{sched["minute"].zfill(2)}'
                 if sched["day"]
-                else f'每日  {sched["hour"].zfill(2)}:{sched["minute"].zfill(2)}'
+                else f'每日 {sched["hour"].zfill(2)}:{sched["minute"].zfill(2)}'
             )
         else:
             sched_text = "—"
@@ -735,37 +705,7 @@ if page == "主控表":
             "done_dt": format_dt(get_task_update_dt(task)),
         })
 
-        if launchd["cls"] == "green":
-            count_ok += 1
-        elif launchd["cls"] == "yellow":
-            count_run += 1
-        elif launchd["cls"] == "red":
-            count_err += 1
-        else:
-            count_gray += 1
-
-    st.markdown(f"""
-    <div class="kpi-row">
-      <div class="kpi-card blue"><div class="kpi-label">Total Tasks</div><div class="kpi-value">{len(SCHEDULE_TASKS)}</div><div class="kpi-sub">已設定排程</div></div>
-      <div class="kpi-card green"><div class="kpi-label">Normal</div><div class="kpi-value">{count_ok}</div><div class="kpi-sub">上次退出正常</div></div>
-      <div class="kpi-card yellow"><div class="kpi-label">Running</div><div class="kpi-value">{count_run}</div><div class="kpi-sub">目前執行中</div></div>
-      <div class="kpi-card red"><div class="kpi-label">Error / 未載入</div><div class="kpi-value">{count_err + count_gray}</div><div class="kpi-sub">異常 / 未載入</div></div>
-    </div>
-    """, unsafe_allow_html=True)
-
-    st.markdown('<div class="panel"><div class="panel-head"><div class="panel-tag">📋 TASK STATUS</div><div class="panel-desc">只在今日輸出檔完整產出時才顯示成功與完成時間</div></div>', unsafe_allow_html=True)
-
-    st.markdown("""
-    <div class="task-header-row">
-      <div style="width: 36px;">選取</div>
-      <div style="width: 110px;">任務</div>
-      <div style="flex:1;">說明</div>
-      <div style="width: 160px; text-align:center;">排程</div>
-      <div style="width: 270px; text-align:right;">狀態</div>
-      <div style="width: 110px; text-align:right;">完成時間</div>
-      <div style="width: 90px; text-align:right;">操作</div>
-    </div>
-    """, unsafe_allow_html=True)
+    st.markdown('<div class="panel"><div class="panel-title">任務狀態</div>', unsafe_allow_html=True)
 
     selected_batch_tasks = []
 
@@ -774,7 +714,7 @@ if page == "主控表":
         lk = d["launchd"]
         tk = d["today"]
 
-        row_cols = st.columns([0.5, 1.2, 2.8, 1.3, 2.0, 1.2, 1.0])
+        row_cols = st.columns([0.4, 1.2, 2.5, 1.2, 2.0, 1.0, 0.8])
 
         with row_cols[0]:
             checked = st.checkbox("選取任務", key=f"batch_{task['label']}", label_visibility="collapsed")
@@ -785,7 +725,7 @@ if page == "主控表":
             st.markdown(f"**{task['name']}**")
 
         with row_cols[2]:
-            st.caption(f"{task['desc']}  ·  輸出完成 {d['done_text']}")
+            st.caption(f"{task['desc']} · 輸出完成 {d['done_text']}")
 
         with row_cols[3]:
             st.caption(d["sched_text"])
@@ -801,7 +741,7 @@ if page == "主控表":
             st.caption(d["done_dt"])
 
         with row_cols[6]:
-            if st.button("▶ 執行", key=f"run_main_{task['label']}", use_container_width=True):
+            if st.button("▶", key=f"run_main_{task['label']}", use_container_width=True):
                 with st.spinner(f'執行中：{task["name"]}'):
                     code, out, err = run_shell(task["cmd"])
                 st.write(f"### {task['name']} 執行結果")
@@ -809,15 +749,10 @@ if page == "主控表":
                 st.text_area(f"stdout_{task['label']}", out or "(無輸出)", height=220)
                 st.text_area(f"stderr_{task['label']}", err or "(無錯誤)", height=180)
 
-    st.markdown("</div>", unsafe_allow_html=True)
-
-    st.markdown('<div class="panel"><div class="panel-head"><div class="panel-tag">⚙️ CONTROL</div></div>', unsafe_allow_html=True)
-    c1, c2, c3 = st.columns([1.1, 1.3, 1.6])
-
+    c1, c2, c3 = st.columns(3)
     with c1:
         if st.button("🔄 重新整理狀態", use_container_width=True):
             st.rerun()
-
     with c2:
         if st.button("♻️ 重新載入全部排程", use_container_width=True):
             code, out, err = run_shell(
@@ -828,7 +763,6 @@ if page == "主控表":
             )
             st.code((out or "") + ("\n" + err if err else ""))
             st.rerun()
-
     with c3:
         if st.button("▶ 執行勾選項目", use_container_width=True):
             if not selected_batch_tasks:
@@ -843,11 +777,6 @@ if page == "主控表":
                         "回傳碼": code,
                         "結果": "成功" if code == 0 else "失敗",
                     })
-
-                    with st.expander(f'{task["name"]} 詳細輸出', expanded=False):
-                        st.text_area(f'batch_stdout_{task["label"]}', out or "(無輸出)", height=180)
-                        st.text_area(f'batch_stderr_{task["label"]}', err or "(無錯誤)", height=140)
-
                 st.dataframe(pd.DataFrame(batch_result_rows), use_container_width=True, hide_index=True)
 
     st.markdown("</div>", unsafe_allow_html=True)
@@ -858,9 +787,9 @@ if page == "主控表":
 elif page == "手動執行":
     st.markdown('<div class="page-title">手動執行</div><div class="page-subtitle">MANUAL TRIGGER</div>', unsafe_allow_html=True)
 
-    st.markdown('<div class="panel"><div class="panel-head"><div class="panel-tag">▶️ 排程任務</div></div>', unsafe_allow_html=True)
-    schedule_selected = st.selectbox("選擇排程任務", SCHEDULE_TASKS, format_func=lambda x: f'{x["name"]}  ·  {x["desc"]}', key="schedule_task_select")
-    if st.button(f'▶  執行：{schedule_selected["name"]}', use_container_width=True):
+    st.markdown('<div class="panel"><div class="panel-title">排程任務</div>', unsafe_allow_html=True)
+    schedule_selected = st.selectbox("選擇排程任務", SCHEDULE_TASKS, format_func=lambda x: f'{x["name"]} · {x["desc"]}', key="schedule_task_select")
+    if st.button(f'▶ 執行：{schedule_selected["name"]}', use_container_width=True):
         with st.spinner("執行中…"):
             code, out, err = run_shell(schedule_selected["cmd"])
         st.write(f"回傳碼：`{code}`")
@@ -868,7 +797,7 @@ elif page == "手動執行":
         st.text_area("stderr", err or "(無錯誤)", height=180)
     st.markdown("</div>", unsafe_allow_html=True)
 
-    st.markdown('<div class="panel"><div class="panel-head"><div class="panel-tag">🐍 單支 .py</div></div>', unsafe_allow_html=True)
+    st.markdown('<div class="panel"><div class="panel-title">單支 .py</div>', unsafe_allow_html=True)
     py_files = list_python_files()
     py_selected = st.selectbox("選擇 Python 腳本", py_files, format_func=lambda x: x.name, key="py_task_select")
     month_arg = ""
@@ -877,14 +806,14 @@ elif page == "手動執行":
         month_arg = st.text_input("輸入月份（YYYYMM）", value=datetime.today().strftime("%Y%m"), key="month_arg_input")
     if py_selected.name in cfg.get("halfmonth_scripts", []):
         half_arg = st.selectbox("選擇半月", ["1", "2"], format_func=lambda x: "上半月" if x == "1" else "下半月", key="half_arg_select")
-    if st.button(f'▶  執行：{py_selected.name}', use_container_width=True):
+
+    if st.button(f'▶ 執行：{py_selected.name}', use_container_width=True):
         if py_selected.name in cfg.get("halfmonth_scripts", []):
             if len(month_arg) != 6 or not month_arg.isdigit():
                 st.error("月份格式請輸入 YYYYMM，例如 202603")
             else:
                 cmd = f'cd "{BASE_DIR}" && /usr/bin/python3 "{py_selected.name}" {month_arg} {half_arg}'
-                with st.spinner("執行中…"):
-                    code, out, err = run_shell(cmd)
+                code, out, err = run_shell(cmd)
                 st.write(f"回傳碼：`{code}`")
                 st.text_area("stdout", out or "(無輸出)", height=220)
                 st.text_area("stderr", err or "(無錯誤)", height=180)
@@ -893,15 +822,13 @@ elif page == "手動執行":
                 st.error("月份格式請輸入 YYYYMM，例如 202603")
             else:
                 cmd = f'cd "{BASE_DIR}" && /usr/bin/python3 "{py_selected.name}" {month_arg}'
-                with st.spinner("執行中…"):
-                    code, out, err = run_shell(cmd)
+                code, out, err = run_shell(cmd)
                 st.write(f"回傳碼：`{code}`")
                 st.text_area("stdout", out or "(無輸出)", height=220)
                 st.text_area("stderr", err or "(無錯誤)", height=180)
         else:
             cmd = f'cd "{BASE_DIR}" && /usr/bin/python3 "{py_selected.name}"'
-            with st.spinner("執行中…"):
-                code, out, err = run_shell(cmd)
+            code, out, err = run_shell(cmd)
             st.write(f"回傳碼：`{code}`")
             st.text_area("stdout", out or "(無輸出)", height=220)
             st.text_area("stderr", err or "(無錯誤)", height=180)
@@ -912,7 +839,8 @@ elif page == "手動執行":
 # ══════════════════════════════════════════════════
 elif page == "Log 監控":
     st.markdown('<div class="page-title">Log 監控</div><div class="page-subtitle">LOG MONITOR</div>', unsafe_allow_html=True)
-    st.markdown('<div class="panel">', unsafe_allow_html=True)
+    st.markdown('<div class="panel"><div class="panel-title">Log 檔案</div>', unsafe_allow_html=True)
+
     log_choices = {
         "主 log（cron.log）": LOG_FILE,
         "daily01 stderr": BASE_DIR / "launchd_daily01_stderr.log",
@@ -923,6 +851,7 @@ elif page == "Log 監控":
         "midmonth stderr": BASE_DIR / "launchd_midmonth_stderr.log",
         "monthend stderr": BASE_DIR / "launchd_monthend_stderr.log",
     }
+
     c1, c2, c3 = st.columns([3, 1, 1])
     with c1:
         selected_log = st.selectbox("選擇 log 檔", list(log_choices.keys()))
@@ -934,17 +863,17 @@ elif page == "Log 監控":
 
     log_path = log_choices[selected_log]
     raw_log = read_last_lines(log_path, n_lines)
-    st.caption(f"檔案：{log_path}  ·  更新：{file_mtime(log_path)}")
+    st.caption(f"檔案：{log_path} · 更新：{file_mtime(log_path)}")
     st.markdown(f'<div class="log-box">{highlight_log(raw_log)}</div>', unsafe_allow_html=True)
     st.markdown("</div>", unsafe_allow_html=True)
 
 # ══════════════════════════════════════════════════
-# 輸出檔案
+# 輸出報表
 # ══════════════════════════════════════════════════
-elif page == "輸出檔案":
-    st.markdown('<div class="page-title">輸出檔案監控</div><div class="page-subtitle">OUTPUT FILES</div>', unsafe_allow_html=True)
+elif page == "輸出報表":
+    st.markdown('<div class="page-title">輸出報表</div><div class="page-subtitle">OUTPUT FILES</div>', unsafe_allow_html=True)
 
-    st.markdown('<div class="panel"><div class="panel-head"><div class="panel-tag">📊 總覽</div><div class="panel-desc">只有今日正常產出的檔案才顯示完成時間</div></div>', unsafe_allow_html=True)
+    st.markdown('<div class="panel"><div class="panel-title">總覽</div>', unsafe_allow_html=True)
     rows = []
     for name, out_dir in OUTPUT_DIRS.items():
         info = get_output_completion_info(name)
@@ -961,10 +890,10 @@ elif page == "輸出檔案":
     st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
     st.markdown("</div>", unsafe_allow_html=True)
 
-    st.markdown('<div class="panel"><div class="panel-head"><div class="panel-tag">📁 詳細清單</div></div>', unsafe_allow_html=True)
+    st.markdown('<div class="panel"><div class="panel-title">詳細清單</div>', unsafe_allow_html=True)
     selected_folder = st.selectbox("查看哪個資料夾", list(OUTPUT_DIRS.keys()))
-    col1, col2 = st.columns([3, 1])
-    with col2:
+    c1, c2 = st.columns([3, 1])
+    with c2:
         if st.button("📁 在 Finder 開啟", use_container_width=True):
             open_in_finder(OUTPUT_DIRS[selected_folder])
             st.success("已開啟 Finder")
@@ -994,12 +923,12 @@ elif page == "輸出檔案":
     st.markdown("</div>", unsafe_allow_html=True)
 
 # ══════════════════════════════════════════════════
-# 程式管理
+# 腳本管理
 # ══════════════════════════════════════════════════
-elif page == "程式管理":
-    st.markdown('<div class="page-title">程式管理</div><div class="page-subtitle">CODE MANAGEMENT</div>', unsafe_allow_html=True)
+elif page == "腳本管理":
+    st.markdown('<div class="page-title">腳本管理</div><div class="page-subtitle">CODE MANAGEMENT</div>', unsafe_allow_html=True)
 
-    st.markdown('<div class="panel"><div class="panel-head"><div class="panel-tag">➕ 新增 .py</div></div>', unsafe_allow_html=True)
+    st.markdown('<div class="panel"><div class="panel-title">新增 .py</div>', unsafe_allow_html=True)
     new_filename = st.text_input("檔名（例如 test.py）", key="new_py_filename")
     new_content = st.text_area("程式內容", value="# new python file\n\nprint('hello')\n", height=180, key="new_py_content")
     if st.button("建立 .py"):
@@ -1015,7 +944,7 @@ elif page == "程式管理":
                 st.rerun()
     st.markdown("</div>", unsafe_allow_html=True)
 
-    st.markdown('<div class="panel"><div class="panel-head"><div class="panel-tag">⚙️ 執行參數設定</div></div>', unsafe_allow_html=True)
+    st.markdown('<div class="panel"><div class="panel-title">執行參數設定</div>', unsafe_allow_html=True)
     py_files = list_python_files()
     py_names = [p.name for p in py_files]
     selected_yyyymm = st.multiselect("需要輸入 YYYYMM 的 .py", py_names, default=cfg.get("yyyymm_scripts", []))
@@ -1028,14 +957,14 @@ elif page == "程式管理":
         st.rerun()
     st.markdown("</div>", unsafe_allow_html=True)
 
-    st.markdown('<div class="panel"><div class="panel-head"><div class="panel-tag">✏️ 修改 / 刪除 / 測試</div></div>', unsafe_allow_html=True)
+    st.markdown('<div class="panel"><div class="panel-title">修改 / 刪除 / 測試</div>', unsafe_allow_html=True)
     if not py_files:
         st.warning("找不到任何 .py 檔")
     else:
         selected_file = st.selectbox(
             "選擇要管理的 .py",
             py_files,
-            format_func=lambda p: f"{p.name}  ·  {classify_py(p.name)}  ·  {file_size_str(p)}",
+            format_func=lambda p: f"{p.name} · {classify_py(p.name)} · {file_size_str(p)}",
             key="edit_py_select",
         )
         selected_path = str(selected_file)
@@ -1055,7 +984,7 @@ elif page == "程式管理":
         c1, c2, c3, c4 = st.columns(4)
 
         with c1:
-            if st.button("💾  儲存修改"):
+            if st.button("💾 儲存修改"):
                 backup_path = selected_file.with_suffix(selected_file.suffix + ".bak")
                 shutil.copy2(selected_file, backup_path)
                 selected_file.write_text(edited_text, encoding="utf-8")
@@ -1063,7 +992,7 @@ elif page == "程式管理":
                 st.success(f"已儲存，備份：{backup_path.name}")
 
         with c2:
-            if st.button("🔄  重新讀取"):
+            if st.button("🔄 重新讀取"):
                 st.session_state.editor_current_file = selected_path
                 st.session_state.editor_content_cache = selected_file.read_text(encoding="utf-8", errors="ignore")
                 if editor_widget_key in st.session_state:
@@ -1071,7 +1000,7 @@ elif page == "程式管理":
                 st.rerun()
 
         with c3:
-            if st.button("🧪  語法測試"):
+            if st.button("🧪 語法測試"):
                 try:
                     with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False, encoding="utf-8") as tmp:
                         tmp.write(edited_text)
@@ -1083,7 +1012,7 @@ elif page == "程式管理":
 
         with c4:
             confirm_delete = st.checkbox("確認刪除", key="confirm_delete_checkbox")
-            if st.button("🗑  刪除"):
+            if st.button("🗑 刪除"):
                 if not confirm_delete:
                     st.error("請先勾選「確認刪除」")
                 else:
@@ -1097,7 +1026,6 @@ elif page == "程式管理":
                         if k in st.session_state:
                             del st.session_state[k]
                     st.rerun()
-
     st.markdown("</div>", unsafe_allow_html=True)
 
 # ══════════════════════════════════════════════════
@@ -1105,8 +1033,9 @@ elif page == "程式管理":
 # ══════════════════════════════════════════════════
 elif page == "排程設定":
     st.markdown('<div class="page-title">排程設定</div><div class="page-subtitle">SCHEDULE CONFIG</div>', unsafe_allow_html=True)
+
     for task in SCHEDULE_TASKS:
-        st.markdown(f'<div class="panel"><div class="panel-head"><div class="panel-tag">⏰ {task["name"]}</div><div class="panel-desc">{task["desc"]}</div></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="panel"><div class="panel-title">{task["name"]}｜{task["desc"]}</div>', unsafe_allow_html=True)
         info = load_plist_schedule(task["plist"])
         if info["type"] != "dict":
             st.warning("此 plist 暫不支援直接修改")
@@ -1152,7 +1081,6 @@ elif page == "業績報表":
                     persist_dashboard=True,
                     trigger="dashboard",
                 )
-            reset_sales_pages()
             st.success(f"更新完成：{result['updated_at']}")
             st.rerun()
 
@@ -1164,14 +1092,11 @@ elif page == "業績報表":
                     persist_dashboard=True,
                     trigger="dashboard",
                 )
-            reset_sales_pages()
             st.success(f"已寄送：{result['updated_at']}")
             st.rerun()
 
     with b3:
         if st.button("📂 重新讀取已存資料", use_container_width=True):
-            reset_sales_pages()
-            st.success("已重新讀取")
             st.rerun()
 
     payload = load_sales_latest_payload()
@@ -1184,11 +1109,7 @@ elif page == "業績報表":
     daily_history_df = load_daily_history_for_current_month()
 
     updated_at = meta.get("updated_at", "尚未產生資料")
-
-    st.markdown(
-        f'<div class="panel"><div class="panel-head"><div class="panel-tag">📌 LATEST</div><div class="panel-desc">最新更新時間：{updated_at}</div></div></div>',
-        unsafe_allow_html=True,
-    )
+    st.info(f"最新更新時間：{updated_at}")
 
     total = get_sales_total_row(df4)
     k1, k2, k3, k4 = st.columns(4)
@@ -1203,93 +1124,59 @@ elif page == "業績報表":
         k3.metric("本月家電加總", sales_fmt_int(total.get("本月家電加總", 0)))
         k4.metric("儲值金", sales_fmt_int(total.get("儲值金", 0)))
 
-    st.markdown('<div class="panel"><div class="panel-head"><div class="panel-tag">📊 SUMMARY</div></div>', unsafe_allow_html=True)
+    st.markdown('<div class="panel"><div class="panel-title">各區月度摘要</div>', unsafe_allow_html=True)
     if df4.empty:
-        st.warning("目前沒有各區月度摘要資料")
+        st.warning("目前沒有資料")
     else:
         st.dataframe(style_sales_df4(df4), use_container_width=True, hide_index=True)
     st.markdown("</div>", unsafe_allow_html=True)
 
-    st.markdown('<div class="panel"><div class="panel-head"><div class="panel-tag">📅 DAILY OVERVIEW</div></div>', unsafe_allow_html=True)
+    st.markdown('<div class="panel"><div class="panel-title">當月每日業績總覽</div>', unsafe_allow_html=True)
     if daily_df.empty:
-        st.warning("目前沒有當月每日業績總覽資料")
+        st.warning("目前沒有資料")
     else:
         st.dataframe(style_sales_daily(daily_df), use_container_width=True, hide_index=True)
     st.markdown("</div>", unsafe_allow_html=True)
 
-    st.markdown('<div class="panel"><div class="panel-head"><div class="panel-tag">🧾 EXECUTION LOG</div></div>', unsafe_allow_html=True)
-    exec_page_df, exec_page, exec_total_pages, exec_total_rows = sales_paginate_df(
-        execution_log_df, "sales_exec_page", 10
-    )
-
-    ec1, ec2, ec3 = st.columns([1, 1, 3])
-    with ec1:
-        if st.button("◀ 上一頁", key="sales_exec_prev", use_container_width=True):
-            st.session_state.sales_exec_page = max(1, st.session_state.sales_exec_page - 1)
-            st.rerun()
-    with ec2:
-        if st.button("下一頁 ▶", key="sales_exec_next", use_container_width=True):
-            st.session_state.sales_exec_page = min(exec_total_pages, st.session_state.sales_exec_page + 1)
-            st.rerun()
-    with ec3:
-        st.caption(f"第 {exec_page} / {exec_total_pages} 頁，共 {exec_total_rows} 筆")
-
+    st.markdown('<div class="panel"><div class="panel-title">當月累積執行紀錄</div>', unsafe_allow_html=True)
     if execution_log_df.empty:
         st.warning("目前沒有執行紀錄")
     else:
-        st.dataframe(style_sales_exec(exec_page_df), use_container_width=True, hide_index=True)
+        st.dataframe(style_sales_exec(execution_log_df), use_container_width=True, hide_index=True)
     st.markdown("</div>", unsafe_allow_html=True)
 
-    st.markdown('<div class="panel"><div class="panel-head"><div class="panel-tag">🗂 DAILY HISTORY</div><div class="panel-desc">可勾選刪除</div></div>', unsafe_allow_html=True)
-    history_page_df, history_page, history_total_pages, history_total_rows = sales_paginate_df(
-        daily_history_df, "sales_history_page", 10
-    )
-
-    hc1, hc2, hc3 = st.columns([1, 1, 3])
-    with hc1:
-        if st.button("◀ 上一頁 ", key="sales_history_prev", use_container_width=True):
-            st.session_state.sales_history_page = max(1, st.session_state.sales_history_page - 1)
-            st.rerun()
-    with hc2:
-        if st.button("下一頁 ▶ ", key="sales_history_next", use_container_width=True):
-            st.session_state.sales_history_page = min(history_total_pages, st.session_state.sales_history_page + 1)
-            st.rerun()
-    with hc3:
-        st.caption(f"第 {history_page} / {history_total_pages} 頁，共 {history_total_rows} 筆")
-
+    st.markdown('<div class="panel"><div class="panel-title">當月每日業績總覽留存紀錄</div>', unsafe_allow_html=True)
     if daily_history_df.empty:
-        st.warning("目前沒有每日總覽留存紀錄")
+        st.warning("目前沒有留存紀錄")
     else:
-        selectable_ids = history_page_df["id"].astype(str).tolist()
+        selectable_ids = daily_history_df["id"].astype(str).tolist()
         default_ids = [x for x in st.session_state.sales_delete_ids if x in selectable_ids]
 
         selected_ids = st.multiselect(
             "勾選要刪除的紀錄",
             options=selectable_ids,
             default=default_ids,
-            key="sales_history_multiselect",
         )
         st.session_state.sales_delete_ids = selected_ids
 
-        if st.button("🗑 刪除勾選列", key="delete_sales_history_rows", use_container_width=True):
+        if st.button("🗑 刪除勾選列", use_container_width=True):
             deleted = delete_daily_history_rows(selected_ids)
             st.session_state.sales_delete_ids = []
-            reset_sales_pages()
             st.success(f"已刪除 {deleted} 筆")
             st.rerun()
 
-        display_history = history_page_df.copy()
+        display_history = daily_history_df.copy()
         if "daily_json" in display_history.columns:
             display_history = display_history.drop(columns=["daily_json"])
 
         st.dataframe(style_sales_history(display_history), use_container_width=True, hide_index=True)
     st.markdown("</div>", unsafe_allow_html=True)
 
-    st.markdown('<div class="panel"><div class="panel-head"><div class="panel-tag">✉️ EMAIL PREVIEW</div></div>', unsafe_allow_html=True)
-    if not email_html:
-        st.info("目前沒有信件預覽內容")
-    else:
+    st.markdown('<div class="panel"><div class="panel-title">信件預覽</div>', unsafe_allow_html=True)
+    if email_html:
         st.components.v1.html(email_html, height=520, scrolling=True)
+    else:
+        st.info("目前沒有信件內容")
     st.markdown("</div>", unsafe_allow_html=True)
 
-st.caption(f"Lemon Clean Scheduler Console  ·  {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+st.caption(f"Lemon Clean Scheduler Console · {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
