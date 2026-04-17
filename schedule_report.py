@@ -1,3 +1,4 @@
+import json
 import os
 import shutil
 import tempfile
@@ -25,17 +26,11 @@ HEADERS = {
     "Content-Type": "application/x-www-form-urlencoded",
 }
 
-# Google Drive
 GDRIVE_FOLDER_ID = "1V0IjoJqHlnkGb3Oq70Cil63pQ9j8r2Xv"
 GDRIVE_SCOPES = ["https://www.googleapis.com/auth/drive"]
 
-# 台北時區
 TZ = timezone(timedelta(hours=8))
 
-# 是否在 GitHub Actions
-IS_GITHUB = os.getenv("GITHUB_ACTIONS") == "true"
-
-# 本機輸出資料夾（只有本機跑時才會用）
 LOCAL_OUTPUT_DIR = Path(
     "/Users/jenny/Library/CloudStorage/GoogleDrive-jenny@lemonclean.com.tw/.shortcut-targets-by-id/1zbu45AG1adMzz24HPdi_tLfh2Tncw_Br/排班統計表"
 )
@@ -47,12 +42,6 @@ def log(msg: str):
 
 
 def get_secret(path_list, env_name=None, required=True, default=None):
-    """
-    依序嘗試：
-    1. streamlit secrets
-    2. 環境變數
-    """
-    # 先讀 streamlit secrets
     if HAS_STREAMLIT:
         try:
             cur = st.secrets
@@ -63,7 +52,6 @@ def get_secret(path_list, env_name=None, required=True, default=None):
         except Exception:
             pass
 
-    # 再讀環境變數
     if env_name:
         value = os.getenv(env_name)
         if value not in (None, ""):
@@ -90,10 +78,6 @@ def load_accounts():
 
 
 def get_service_account_info():
-    """
-    優先用 streamlit secrets 的 GOOGLE_SERVICE_ACCOUNT
-    否則用環境變數 GOOGLE_SERVICE_ACCOUNT_JSON
-    """
     if HAS_STREAMLIT:
         try:
             creds_dict = dict(st.secrets["GOOGLE_SERVICE_ACCOUNT"])
@@ -104,7 +88,6 @@ def get_service_account_info():
 
     json_str = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")
     if json_str:
-        import json
         return json.loads(json_str)
 
     raise RuntimeError("找不到 GOOGLE_SERVICE_ACCOUNT 設定")
@@ -209,13 +192,25 @@ def upload_to_gdrive(local_path: str, folder_id: str):
     return created["id"]
 
 
+def can_use_local_output_dir() -> bool:
+    """
+    只有在本機真的存在 /Users/jenny 時才嘗試存本機。
+    雲端 / Linux / Streamlit Cloud 一律跳過。
+    """
+    try:
+        users_dir = Path("/Users")
+        jenny_dir = Path("/Users/jenny")
+        return users_dir.exists() and jenny_dir.exists()
+    except Exception:
+        return False
+
+
 def save_to_local_if_possible(temp_file_path: str, filename: str):
     """
-    只有在本機跑時，才另外複製到本機資料夾
-    GitHub Actions 直接跳過
+    可存就存，不可存就跳過，絕不讓整支程式因此失敗。
     """
-    if IS_GITHUB:
-        log("目前在 GitHub Actions，略過本機存檔")
+    if not can_use_local_output_dir():
+        log("目前不是 Jenny 本機環境，略過本機存檔")
         return
 
     try:
@@ -224,7 +219,7 @@ def save_to_local_if_possible(temp_file_path: str, filename: str):
         shutil.copy2(temp_file_path, local_file)
         log(f"💾 已另存本機：{local_file}")
     except Exception as e:
-        raise RuntimeError(f"本機存檔失敗：{e}")
+        log(f"⚠️ 本機存檔失敗，已略過：{e}")
 
 
 def export_schedule(session: requests.Session, month: str, filename: str):
@@ -251,10 +246,7 @@ def export_schedule(session: requests.Session, month: str, filename: str):
         log(f"📂 暫存目錄存在：{Path(tmpdir).exists()}")
         log(f"📄 暫存檔案存在：{Path(full_path).exists()}")
 
-        # 本機存一份（本機跑才做）
         save_to_local_if_possible(full_path, filename)
-
-        # 上傳 GDrive
         upload_to_gdrive(full_path, GDRIVE_FOLDER_ID)
 
         log(f"✅ 完成處理：{filename}")
@@ -264,10 +256,10 @@ def main():
     log("====================================================")
     log("schedule_report.py 開始執行")
     log(f"GITHUB_ACTIONS = {os.getenv('GITHUB_ACTIONS')}")
-    log(f"IS_GITHUB = {IS_GITHUB}")
     log(f"PWD = {os.getcwd()}")
     log(f"LOCAL_OUTPUT_DIR = {LOCAL_OUTPUT_DIR}")
     log(f"LOCAL_OUTPUT_DIR exists = {LOCAL_OUTPUT_DIR.exists()}")
+    log(f"can_use_local_output_dir = {can_use_local_output_dir()}")
     log("====================================================")
 
     this_month, next_month, today_stamp, next_month_stamp = get_month_strings()
