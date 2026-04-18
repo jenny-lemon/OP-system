@@ -399,7 +399,11 @@ def render_sales_page():
 
     if update_btn:
         with st.spinner("更新資料中…"):
-            result = generate_sales_report(send_email=False, persist_dashboard=True, trigger="dashboard")
+            result = generate_sales_report(
+                send_email=False,
+                persist_dashboard=True,
+                trigger="dashboard"
+            )
 
     if result is not None:
         df4 = result.get("df4", pd.DataFrame())
@@ -416,6 +420,7 @@ def render_sales_page():
         raw_ts = meta.get("updated_at", "") if isinstance(meta, dict) else ""
         updated_at = raw_ts if raw_ts else "尚未產生資料"
         error_msg = meta.get("error") if isinstance(meta, dict) else None
+
         if payload.get("df4_error"):
             st.warning(f"df4.csv 讀取錯誤：{payload['df4_error']}")
         if payload.get("daily_df_error"):
@@ -434,6 +439,7 @@ def render_sales_page():
 
     if error_msg:
         st.error(f"上次執行有錯誤：{error_msg}")
+
     st.info(f"📅 最新更新時間：{updated_at}")
 
     total = None
@@ -450,15 +456,25 @@ def render_sales_page():
 
     st.markdown('<div class="section-card">', unsafe_allow_html=True)
     st.markdown('<div class="section-title">📊 各區月度摘要</div>', unsafe_allow_html=True)
+
     if df4.empty:
-        st.markdown('<div class="empty-state"><span class="icon">📭</span>目前沒有資料，請先按「更新資料」</div>', unsafe_allow_html=True)
+        st.markdown(
+            '<div class="empty-state"><span class="icon">📭</span>目前沒有資料，請先按「更新資料」</div>',
+            unsafe_allow_html=True
+        )
     else:
         int4 = {"本月加總", "次月加總", "本月家電加總", "次月家電加總", "儲值金"}
         pct4 = {"本月佔比", "次月佔比"}
         st.markdown(
-            render_html_table(df4, right_cols=int4 | pct4, pct_cols=pct4, int_cols=int4),
+            render_html_table(
+                df4,
+                right_cols=int4 | pct4,
+                pct_cols=pct4,
+                int_cols=int4
+            ),
             unsafe_allow_html=True
         )
+
     st.markdown("</div>", unsafe_allow_html=True)
 
     st.markdown('<div class="section-card">', unsafe_allow_html=True)
@@ -470,12 +486,17 @@ def render_sales_page():
         f"載入：{len(daily_df)} 行 × {len(daily_df.columns)} 欄"
     ]
     if not daily_df.empty:
-        parts.append(f"欄位：{', '.join(daily_df.columns[:8].tolist())}{'…' if len(daily_df.columns) > 8 else ''}")
+        parts.append(
+            f"欄位：{', '.join(daily_df.columns[:8].tolist())}{'…' if len(daily_df.columns) > 8 else ''}"
+        )
     st.caption("  ·  ".join(parts))
 
     if daily_df.empty:
         reason = "daily_df.csv 不存在，請先按「更新資料」。" if not daily_csv.exists() else "CSV 存在但無資料列。"
-        st.markdown(f'<div class="empty-state"><span class="icon">📭</span>{reason}</div>', unsafe_allow_html=True)
+        st.markdown(
+            f'<div class="empty-state"><span class="icon">📭</span>{reason}</div>',
+            unsafe_allow_html=True
+        )
     else:
         daily_view_df = daily_df.copy()
 
@@ -505,7 +526,9 @@ def render_sales_page():
             )
 
             if st.button("🗑 刪除勾選列", key="del_daily_df_btn", use_container_width=True):
-                keep_df = daily_df[~daily_df["id"].astype(str).isin([str(x) for x in del_ids])].copy()
+                keep_df = daily_df[
+                    ~daily_df["id"].astype(str).isin([str(x) for x in del_ids])
+                ].copy()
                 keep_df.to_csv(daily_csv, index=False, encoding="utf-8-sig")
                 st.success(f"已刪除 {len(daily_df) - len(keep_df)} 筆")
                 st.rerun()
@@ -532,20 +555,9 @@ def render_sales_page():
         current_page = min(max(1, current_page), total_pages)
         st.session_state["daily_df_page"] = current_page
 
-        page = st.number_input(
-            "頁數",
-            min_value=1,
-            max_value=total_pages,
-            value=current_page,
-            step=1,
-            key="daily_df_page"
-        )
-
-        start_idx = (page - 1) * PAGE_SIZE
+        start_idx = (current_page - 1) * PAGE_SIZE
         end_idx = start_idx + PAGE_SIZE
         page_df = daily_view_df.iloc[start_idx:end_idx].copy()
-
-        st.caption(f"第 {page} / {total_pages} 頁（每頁 {PAGE_SIZE} 筆，共 {total_rows} 筆）")
 
         st.markdown(
             render_html_table(
@@ -556,6 +568,36 @@ def render_sales_page():
             ),
             unsafe_allow_html=True
         )
+
+        st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
+
+        p1, p2, p3 = st.columns([1, 2, 1])
+
+        with p1:
+            if st.button("⬅ 上一頁", key="daily_prev_page", use_container_width=True, disabled=(current_page <= 1)):
+                st.session_state["daily_df_page"] = current_page - 1
+                st.rerun()
+
+        with p2:
+            page = st.number_input(
+                "頁數",
+                min_value=1,
+                max_value=total_pages,
+                value=current_page,
+                step=1,
+                key="daily_df_page_input"
+            )
+
+            if int(page) != int(current_page):
+                st.session_state["daily_df_page"] = int(page)
+                st.rerun()
+
+            st.caption(f"第 {current_page} / {total_pages} 頁（每頁 {PAGE_SIZE} 筆，共 {total_rows} 筆）")
+
+        with p3:
+            if st.button("下一頁 ➡", key="daily_next_page", use_container_width=True, disabled=(current_page >= total_pages)):
+                st.session_state["daily_df_page"] = current_page + 1
+                st.rerun()
 
     st.markdown("</div>", unsafe_allow_html=True)
 
