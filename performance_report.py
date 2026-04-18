@@ -268,11 +268,7 @@ def parse_html(html):
                 continue
 
             service = normalize_service(row[0] if len(row) > 0 else "")
-            if not service:
-                continue
-            if service == "加總":
-                continue
-            if service.startswith("LC"):
+            if not service or service == "加總" or service.startswith("LC"):
                 continue
 
             paid = safe_int(row[paid_idx]) if paid_idx is not None and len(row) > paid_idx else 0
@@ -362,21 +358,16 @@ def build_region2_df(raw_df: pd.DataFrame) -> pd.DataFrame:
                 bm = sub[sub["月份"] == "本月"]
                 nm = sub[sub["月份"] == "下月"]
 
-                bm_paid = bm["已付款"].sum()
-                bm_unpaid = bm["待付款"].sum()
-                nm_paid = nm["已付款"].sum()
-                nm_unpaid = nm["待付款"].sum()
-
                 rows.append({
                     "城市": city,
                     "收入類型": income,
                     "類別": category,
-                    "本月待付": bm_unpaid,
-                    "本月已付": bm_paid,
-                    "本月加總": bm_paid + bm_unpaid,
-                    "次月待付": nm_unpaid,
-                    "次月已付": nm_paid,
-                    "次月加總": nm_paid + nm_unpaid,
+                    "本月待付": bm["待付款"].sum(),
+                    "本月已付": bm["已付款"].sum(),
+                    "本月加總": bm["已付款"].sum() + bm["待付款"].sum(),
+                    "次月待付": nm["待付款"].sum(),
+                    "次月已付": nm["已付款"].sum(),
+                    "次月加總": nm["已付款"].sum() + nm["待付款"].sum(),
                 })
 
     return pd.DataFrame(rows)
@@ -465,13 +456,10 @@ def build_region4_df(region2_df: pd.DataFrame) -> pd.DataFrame:
             )
         ]
 
-        bm_total = total_df["本月加總"].sum()
-        nm_total = total_df["次月加總"].sum()
-
         rows.append({
             "城市": city,
-            "本月加總": bm_total,
-            "次月加總": nm_total,
+            "本月加總": total_df["本月加總"].sum(),
+            "次月加總": total_df["次月加總"].sum(),
             "本月家電加總": bm_appliance,
             "次月家電加總": nm_appliance,
             "儲值金": bm_cash_stored + nm_cash_stored,
@@ -526,9 +514,10 @@ def build_daily_overview_df(df4: pd.DataFrame) -> pd.DataFrame:
         log("⚠️ build_daily_overview_df：df4 為空")
         return pd.DataFrame(columns=cols)
 
+    latest_daily = os.path.join(LATEST_DIR, "daily_df.csv")
     now_obj = now_dt()
-    now_str = now_obj.strftime("%Y/%m/%d %H:%M")
     row_id = now_obj.strftime("%Y%m%d%H%M%S")
+    date_text = now_obj.strftime("%Y/%m/%d %H:%M")
 
     def get_val(city, col):
         try:
@@ -539,7 +528,6 @@ def build_daily_overview_df(df4: pd.DataFrame) -> pd.DataFrame:
         except Exception:
             return 0
 
-    latest_daily = os.path.join(LATEST_DIR, "daily_df.csv")
     if os.path.exists(latest_daily):
         try:
             old_df = pd.read_csv(latest_daily, encoding="utf-8-sig")
@@ -555,7 +543,7 @@ def build_daily_overview_df(df4: pd.DataFrame) -> pd.DataFrame:
     new_row = {
         "id": row_id,
         "來源": "dashboard",
-        "日期": now_str,
+        "日期": date_text,
         "台北業績": get_val("台北", "本月加總"),
         "台北佔比": get_val("台北", "本月佔比"),
         "台中業績": get_val("台中", "本月加總"),
@@ -571,8 +559,8 @@ def build_daily_overview_df(df4: pd.DataFrame) -> pd.DataFrame:
 
     out = pd.concat([old_df[cols], pd.DataFrame([new_row])], ignore_index=True)
 
-    current_month = now_obj.strftime("%Y/%m")
-    out = out[out["日期"].astype(str).str.startswith(current_month)].copy()
+    current_prefix = now_obj.strftime("%Y/%m")
+    out = out[out["日期"].astype(str).str.startswith(current_prefix)].copy()
     out = out.reset_index(drop=True)
 
     log(f"✅ build_daily_overview_df 完成，筆數 = {len(out)}")
@@ -581,11 +569,9 @@ def build_daily_overview_df(df4: pd.DataFrame) -> pd.DataFrame:
 
 def format_region4_for_display(df4: pd.DataFrame) -> pd.DataFrame:
     out = df4.copy()
-
     for col in ["本月加總", "次月加總", "本月家電加總", "次月家電加總", "儲值金"]:
         if col in out.columns:
             out[col] = out[col].apply(lambda x: int(x) if pd.notna(x) else 0)
-
     return out
 
 
@@ -657,46 +643,8 @@ def send_region4_email(df4, recipient="jenny@lemonclean.com.tw"):
     log(f"✅ 已寄出：{recipient}")
 
 
-def append_execution_log(df4: pd.DataFrame, trigger: str):
-    ensure_dirs()
-
-    now = now_dt()
-    exec_file = os.path.join(EXEC_LOG_DIR, now.strftime("%Y%m") + ".csv")
-
-    total_row = df4[df4["城市"] == "加總"]
-    if total_row.empty:
-        return
-
-    total_row = total_row.iloc[0]
-
-    row = {
-        "id": now.strftime("%Y%m%d%H%M%S"),
-        "執行時間": now.strftime("%Y-%m-%d %H:%M:%S"),
-        "來源": trigger,
-        "本月加總": int(total_row.get("本月加總", 0)),
-        "次月加總": int(total_row.get("次月加總", 0)),
-        "本月家電加總": int(total_row.get("本月家電加總", 0)),
-        "次月家電加總": int(total_row.get("次月家電加總", 0)),
-        "儲值金": int(total_row.get("儲值金", 0)),
-    }
-
-    new_df = pd.DataFrame([row])
-
-    if os.path.exists(exec_file):
-        old_df = pd.read_csv(exec_file, encoding="utf-8-sig")
-        out_df = pd.concat([old_df, new_df], ignore_index=True)
-    else:
-        out_df = new_df
-
-    out_df.to_csv(exec_file, index=False, encoding="utf-8-sig")
-
-
 def load_execution_log_for_current_month() -> pd.DataFrame:
-    ensure_dirs()
-    return pd.DataFrame(columns=[
-        "id", "執行時間", "來源", "本月加總", "次月加總",
-        "本月家電加總", "次月家電加總", "儲值金"
-    ])
+    return pd.DataFrame()
 
 
 def delete_execution_log_rows(ids):
@@ -704,63 +652,15 @@ def delete_execution_log_rows(ids):
 
 
 def append_daily_overview_history(daily_df: pd.DataFrame, trigger: str):
-    ensure_dirs()
-
-    now = now_dt()
-    month_file = os.path.join(DAILY_HISTORY_DIR, now.strftime("%Y%m") + ".csv")
-
-    total_today = 0
-    if not daily_df.empty and "全區合計" in daily_df.columns:
-        last_row = daily_df.iloc[-1]
-        total_today = int(float(last_row.get("全區合計", 0)))
-
-    row = {
-        "id": now.strftime("%Y%m%d%H%M%S"),
-        "執行時間": now.strftime("%Y-%m-%d %H:%M:%S"),
-        "來源": trigger,
-        "日期": now.strftime("%Y-%m-%d"),
-        "今日全區合計": total_today,
-        "daily_rows": int(len(daily_df)),
-        "daily_json": daily_df.to_json(orient="records", force_ascii=False),
-    }
-
-    new_df = pd.DataFrame([row])
-
-    if os.path.exists(month_file):
-        old_df = pd.read_csv(month_file, encoding="utf-8-sig")
-        out_df = pd.concat([old_df, new_df], ignore_index=True)
-    else:
-        out_df = new_df
-
-    out_df.to_csv(month_file, index=False, encoding="utf-8-sig")
+    return None
 
 
 def load_daily_history_for_current_month() -> pd.DataFrame:
-    ensure_dirs()
-    now = now_dt()
-    month_file = os.path.join(DAILY_HISTORY_DIR, now.strftime("%Y%m") + ".csv")
-    if not os.path.exists(month_file):
-        return pd.DataFrame(columns=[
-            "id", "執行時間", "來源", "日期", "今日全區合計", "daily_rows", "daily_json"
-        ])
-    return pd.read_csv(month_file, encoding="utf-8-sig")
+    return pd.DataFrame()
 
 
 def delete_daily_history_rows(ids):
-    if not ids:
-        return 0
-
-    ensure_dirs()
-    now = now_dt()
-    month_file = os.path.join(DAILY_HISTORY_DIR, now.strftime("%Y%m") + ".csv")
-    if not os.path.exists(month_file):
-        return 0
-
-    df = pd.read_csv(month_file, encoding="utf-8-sig")
-    before = len(df)
-    df = df[~df["id"].astype(str).isin([str(x) for x in ids])].copy()
-    df.to_csv(month_file, index=False, encoding="utf-8-sig")
-    return before - len(df)
+    return 0
 
 
 def append_output_file_log(category: str, file_path: str, trigger: str):
@@ -1038,7 +938,6 @@ def generate_sales_report(send_email=False, persist_dashboard=True, trigger="das
     log(f"daily_df rows = {len(daily_df)}")
 
     email_html = build_region4_email_html(df4)
-
     error_msg = None if not city_errors else " / ".join(city_errors)
 
     if persist_dashboard:
