@@ -238,6 +238,63 @@ def normalize_date_text(text: str) -> Optional[str]:
 
     return None
 
+def parse_daily_table(html: str) -> pd.DataFrame:
+    soup = BeautifulSoup(html, "html.parser")
+    tables = soup.find_all("table")
+
+    data = []
+
+    for table in tables:
+        rows = table.find_all("tr")
+        current_city = None
+
+        for tr in rows:
+            cols = [td.get_text(strip=True) for td in tr.find_all(["td", "th"])]
+
+            if not cols:
+                continue
+
+            # 城市判斷
+            if cols[0] in CITY_ORDER:
+                current_city = cols[0]
+                continue
+
+            raw_date = cols[0]
+            parsed_date = None
+
+            try:
+                if "-" in raw_date:
+                    parsed_date = datetime.strptime(raw_date, "%Y-%m-%d")
+                elif "/" in raw_date:
+                    today = datetime.today()
+                    parsed_date = datetime.strptime(
+                        f"{today.year}/{raw_date}", "%Y/%m/%d"
+                    )
+            except:
+                pass
+
+            if parsed_date is None:
+                continue
+
+            try:
+                paid = int(cols[1].replace(",", "")) if len(cols) > 1 else 0
+                unpaid = int(cols[2].replace(",", "")) if len(cols) > 2 else 0
+            except:
+                paid = 0
+                unpaid = 0
+
+            data.append({
+                "城市": current_city,
+                "日期": parsed_date,
+                "月份": "本月",
+                "已付款": paid,
+                "待付款": unpaid,
+            })
+
+    df = pd.DataFrame(data)
+
+    log(f"✅ parse_daily_table rows = {len(df)}")
+    return df
 
 def parse_html(html: str) -> pd.DataFrame:
     soup = BeautifulSoup(html, "html.parser")
