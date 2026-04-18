@@ -953,7 +953,8 @@ def generate_sales_report(send_email=False, persist_dashboard=True, trigger="das
     df2 = build_region2_df(raw_df)
     df3 = build_region3_df(df2)
     df4 = build_region4_df(df2)
-    daily_df = build_daily_overview_df(raw_df)
+    # ❗ 改這裡（重點）
+    daily_df = build_daily_overview_df(df4)
 
     log(f"raw_df columns = {list(raw_df.columns)}")
     log(f"raw_df 前5筆 = {raw_df.head().to_dict('records')}")
