@@ -522,85 +522,45 @@ def build_region4_df(region2_df: pd.DataFrame) -> pd.DataFrame:
     ]]
 
 
-def build_daily_overview_df(raw_df: pd.DataFrame) -> pd.DataFrame:
-    cols = [
-        "日期",
-        "台北業績", "台北佔比",
-        "台中業績", "台中佔比",
-        "桃園業績", "桃園佔比",
-        "新竹業績", "新竹佔比",
-        "高雄業績", "高雄佔比",
-        "全區合計",
-    ]
+def build_daily_overview_df(df4: pd.DataFrame) -> pd.DataFrame:
+    """
+    從 df4 直接轉出「當日業績總覽」
+    （只會有一筆 = 當下 snapshot）
+    """
 
-    if raw_df is None or raw_df.empty:
-        return pd.DataFrame(columns=cols)
+    if df4 is None or df4.empty:
+        return pd.DataFrame()
 
-    work = raw_df.copy()
+    now_str = datetime.now().strftime("%Y/%m/%d %H:%M")
 
-    required_cols = ["城市", "月份", "已付款", "待付款", "日期"]
-    for c in required_cols:
-        if c not in work.columns:
-            log(f"⚠️ build_daily_overview_df 缺少欄位：{c}")
-            return pd.DataFrame(columns=cols)
+    def get_val(city, col):
+        try:
+            return df4[df4["城市"] == city][col].values[0]
+        except:
+            return 0
 
-    work = work[work["月份"] == "本月"].copy()
-    if work.empty:
-        log("⚠️ build_daily_overview_df：本月資料為空")
-        return pd.DataFrame(columns=cols)
+    data = {
+        "日期": now_str,
 
-    work["日期"] = pd.to_datetime(work["日期"], errors="coerce")
-    work = work[work["日期"].notna()].copy()
+        "台北業績": get_val("台北", "本月加總"),
+        "台北佔比": get_val("台北", "本月佔比"),
 
-    if work.empty:
-        log("⚠️ build_daily_overview_df：日期轉換後全部為空")
-        return pd.DataFrame(columns=cols)
+        "台中業績": get_val("台中", "本月加總"),
+        "台中佔比": get_val("台中", "本月佔比"),
 
-    work["日期"] = work["日期"].dt.date
-    work["已付款"] = pd.to_numeric(work["已付款"], errors="coerce").fillna(0)
-    work["待付款"] = pd.to_numeric(work["待付款"], errors="coerce").fillna(0)
-    work["業績"] = work["已付款"] + work["待付款"]
+        "桃園業績": get_val("桃園", "本月加總"),
+        "桃園佔比": get_val("桃園", "本月佔比"),
 
-    work = work[work["城市"].isin(CITY_ORDER)].copy()
-    if work.empty:
-        log("⚠️ build_daily_overview_df：篩完城市後沒有資料")
-        return pd.DataFrame(columns=cols)
+        "新竹業績": get_val("新竹", "本月加總"),
+        "新竹佔比": get_val("新竹", "本月佔比"),
 
-    grouped = work.groupby(["日期", "城市"], as_index=False)["業績"].sum()
-    if grouped.empty:
-        log("⚠️ build_daily_overview_df：groupby 後沒有資料")
-        return pd.DataFrame(columns=cols)
+        "高雄業績": get_val("高雄", "本月加總"),
+        "高雄佔比": get_val("高雄", "本月佔比"),
 
-    pivot = grouped.pivot(index="日期", columns="城市", values="業績").fillna(0)
+        "全區合計": get_val("加總", "本月加總"),
+    }
 
-    for city in CITY_ORDER:
-        if city not in pivot.columns:
-            pivot[city] = 0
-
-    pivot = pivot[CITY_ORDER]
-
-    today = datetime.today().date()
-    first_day = date(today.year, today.month, 1)
-    all_days = pd.date_range(first_day, today, freq="D").date
-    pivot = pivot.reindex(all_days, fill_value=0)
-
-    pivot["全區合計"] = pivot.sum(axis=1)
-
-    out = pd.DataFrame(index=pivot.index)
-    out["日期"] = [f"{d.month}/{d.day}" for d in pivot.index]
-
-    for city in CITY_ORDER:
-        out[f"{city}業績"] = pivot[city].astype(int)
-        out[f"{city}佔比"] = pivot.apply(
-            lambda r: 0 if r["全區合計"] == 0 else r[city] / r["全區合計"],
-            axis=1,
-        )
-
-    out["全區合計"] = pivot["全區合計"].astype(int)
-    out = out.reset_index(drop=True)
-
-    log(f"✅ build_daily_overview_df 完成，筆數 = {len(out)}")
-    return out[cols]
+    return pd.DataFrame([data])
 
 
 def format_region4_for_display(df4: pd.DataFrame) -> pd.DataFrame:
