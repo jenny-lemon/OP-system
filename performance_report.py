@@ -523,44 +523,48 @@ def build_region4_df(region2_df: pd.DataFrame) -> pd.DataFrame:
 
 
 def build_daily_overview_df(df4: pd.DataFrame) -> pd.DataFrame:
-    """
-    從 df4 直接轉出「當日業績總覽」
-    （只會有一筆 = 當下 snapshot）
-    """
+    cols = [
+        "日期",
+        "台北業績", "台北佔比",
+        "台中業績", "台中佔比",
+        "桃園業績", "桃園佔比",
+        "新竹業績", "新竹佔比",
+        "高雄業績", "高雄佔比",
+        "全區合計",
+    ]
 
     if df4 is None or df4.empty:
-        return pd.DataFrame()
+        log("⚠️ build_daily_overview_df：df4 為空")
+        return pd.DataFrame(columns=cols)
 
-    now_str = datetime.now().strftime("%Y/%m/%d %H:%M")
+    now_str = now_dt().strftime("%Y/%m/%d %H:%M")
 
     def get_val(city, col):
         try:
-            return df4[df4["城市"] == city][col].values[0]
-        except:
+            row = df4[df4["城市"] == city]
+            if row.empty:
+                return 0
+            return row.iloc[0][col]
+        except Exception:
             return 0
 
-    data = {
+    out = pd.DataFrame([{
         "日期": now_str,
-
         "台北業績": get_val("台北", "本月加總"),
         "台北佔比": get_val("台北", "本月佔比"),
-
         "台中業績": get_val("台中", "本月加總"),
         "台中佔比": get_val("台中", "本月佔比"),
-
         "桃園業績": get_val("桃園", "本月加總"),
         "桃園佔比": get_val("桃園", "本月佔比"),
-
         "新竹業績": get_val("新竹", "本月加總"),
         "新竹佔比": get_val("新竹", "本月佔比"),
-
         "高雄業績": get_val("高雄", "本月加總"),
         "高雄佔比": get_val("高雄", "本月佔比"),
-
         "全區合計": get_val("加總", "本月加總"),
-    }
+    }])
 
-    return pd.DataFrame([data])
+    log(f"✅ build_daily_overview_df 完成，筆數 = {len(out)}")
+    return out[cols]
 
 
 def format_region4_for_display(df4: pd.DataFrame) -> pd.DataFrame:
