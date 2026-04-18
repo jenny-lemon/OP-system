@@ -35,6 +35,9 @@ if IS_LOCAL_MAC:
     PATH_CLEANER_DATA = PATH_JENNY / "專員系統個資"
     PATH_ORDER = PATH_JENNY / "訂單資料"
 
+    # 業績報表
+    PATH_REPORT = PATH_JENNY / "業績報表"
+
     # 財務
     PATH_VIP = BASE_GOOGLE_DRIVE / "lemon_財務" / "02.VIP儲值金"
 
@@ -50,6 +53,7 @@ else:
     PATH_CLEANER_SCHEDULE = CLOUD_BASE / "專員班表"
     PATH_CLEANER_DATA = CLOUD_BASE / "專員系統個資"
     PATH_ORDER = CLOUD_BASE / "訂單資料"
+    PATH_REPORT = CLOUD_BASE / "業績報表"
     PATH_VIP = CLOUD_BASE / "VIP儲值金"
     PATH_HR = CLOUD_BASE / "服務分潤表"
 
@@ -62,6 +66,7 @@ PATHS_TO_CREATE = [
     PATH_CLEANER_SCHEDULE,
     PATH_CLEANER_DATA,
     PATH_ORDER,
+    PATH_REPORT,
     PATH_VIP,
     PATH_HR,
 ]
