@@ -4,6 +4,7 @@ import calendar
 import smtplib
 from email.mime.text import MIMEText
 from datetime import datetime, date
+from pathlib import Path
 from typing import Optional
 
 import pandas as pd
@@ -46,16 +47,16 @@ def now_dt():
     return datetime.now()
 
 
+def log(msg: str):
+    print(f"[{now_dt().strftime('%Y-%m-%d %H:%M:%S')}] {msg}")
+
+
 def ensure_dirs():
     os.makedirs(DASHBOARD_DIR, exist_ok=True)
     os.makedirs(LATEST_DIR, exist_ok=True)
     os.makedirs(SNAPSHOT_DIR, exist_ok=True)
     os.makedirs(EXEC_LOG_DIR, exist_ok=True)
     os.makedirs(DAILY_HISTORY_DIR, exist_ok=True)
-
-
-def log(msg: str):
-    print(f"[{now_dt().strftime('%Y-%m-%d %H:%M:%S')}] {msg}")
 
 
 def get_enabled_cities():
@@ -86,10 +87,10 @@ def login(session, email, password):
         "password": password,
     }
 
-    res = session.post(LOGIN_URL, data=payload, headers=HEADERS, allow_redirects=True)
-    res.raise_for_status()
+    login_res = session.post(LOGIN_URL, data=payload, headers=HEADERS, allow_redirects=True)
+    login_res.raise_for_status()
 
-    if "login" in res.url.lower():
+    if "login" in login_res.url.lower():
         raise RuntimeError(f"{email} 登入失敗")
 
     log(f"✅ 登入成功：{email}")
@@ -161,14 +162,14 @@ def safe_int(v):
 
 
 def normalize_service(name):
-    name = str(name or "").strip()
-    name = name.replace("螨", "蟎")
+    name = str(name or "").strip().replace("螨", "蟎")
 
     mapping = {
         "VIP": "儲值金",
         "冷氣機清潔": "冷氣清潔",
         "冷氣機清潔服務": "冷氣清潔",
         "洗衣機": "洗衣機清潔",
+        "洗衣機清潔": "洗衣機清潔",
         "沙發床墊水洗除蟎": "水洗",
         "沙發床墊水洗除螨": "水洗",
         "沙發清洗": "水洗",
@@ -199,7 +200,10 @@ def normalize_date_text(text: str) -> Optional[str]:
     patterns = [
         r"(20\d{2}-\d{1,2}-\d{1,2})",
         r"(20\d{6})",
+        r"(\d{4}/\d{1,2}/\d{1,2})",
+        r"(\d{4}\.\d{1,2}\.\d{1,2})",
         r"(\d{1,2}-\d{1,2})",
+        r"(\d{1,2}/\d{1,2})",
     ]
 
     for p in patterns:
@@ -215,9 +219,19 @@ def normalize_date_text(text: str) -> Optional[str]:
             if re.fullmatch(r"20\d{6}", raw):
                 dt = datetime.strptime(raw, "%Y%m%d")
                 return dt.strftime("%Y-%m-%d")
+            if re.fullmatch(r"\d{4}/\d{1,2}/\d{1,2}", raw):
+                dt = datetime.strptime(raw, "%Y/%m/%d")
+                return dt.strftime("%Y-%m-%d")
+            if re.fullmatch(r"\d{4}\.\d{1,2}\.\d{1,2}", raw):
+                dt = datetime.strptime(raw, "%Y.%m.%d")
+                return dt.strftime("%Y-%m-%d")
             if re.fullmatch(r"\d{1,2}-\d{1,2}", raw):
                 today = datetime.today()
                 dt = datetime.strptime(f"{today.year}-{raw}", "%Y-%m-%d")
+                return dt.strftime("%Y-%m-%d")
+            if re.fullmatch(r"\d{1,2}/\d{1,2}", raw):
+                today = datetime.today()
+                dt = datetime.strptime(f"{today.year}/{raw}", "%Y/%m/%d")
                 return dt.strftime("%Y-%m-%d")
         except Exception:
             pass
@@ -267,11 +281,7 @@ def parse_html(html):
                 continue
 
             service = normalize_service(row[0] if len(row) > 0 else "")
-            if not service:
-                continue
-            if service == "加總":
-                continue
-            if service.startswith("LC"):
+            if not service or service == "加總" or service.startswith("LC"):
                 continue
 
             paid = safe_int(row[paid_idx]) if paid_idx is not None and len(row) > paid_idx else 0
@@ -335,8 +345,8 @@ def build_region1_df(raw_df: pd.DataFrame) -> pd.DataFrame:
 
     region1["城市"] = pd.Categorical(region1["城市"], categories=CITY_ORDER, ordered=True)
     region1["收入類型"] = pd.Categorical(region1["收入類型"], categories=INCOME_ORDER, ordered=True)
-
     region1 = region1.sort_values(["城市", "收入類型", "服務"]).reset_index(drop=True)
+
     region1["城市"] = region1["城市"].astype(str)
     region1["收入類型"] = region1["收入類型"].astype(str)
     return region1
@@ -508,10 +518,15 @@ def build_region4_df(region2_df: pd.DataFrame) -> pd.DataFrame:
 
 
 def build_daily_overview_df(raw_df: pd.DataFrame) -> pd.DataFrame:
-    cols = ["日期"]
-    for city in CITY_ORDER:
-        cols.extend([f"{city}業績", f"{city}佔比"])
-    cols.append("全區合計")
+    cols = [
+        "日期",
+        "台北業績", "台北佔比",
+        "台中業績", "台中佔比",
+        "桃園業績", "桃園佔比",
+        "新竹業績", "新竹佔比",
+        "高雄業績", "高雄佔比",
+        "全區合計",
+    ]
 
     if raw_df.empty or "日期" not in raw_df.columns:
         return pd.DataFrame(columns=cols)
@@ -554,8 +569,9 @@ def build_daily_overview_df(raw_df: pd.DataFrame) -> pd.DataFrame:
         )
 
     out["全區合計"] = pivot["全區合計"].astype(int)
-    out = out.iloc[::-1].reset_index(drop=True)
-    return out
+    out = out.reset_index(drop=True)
+
+    return out[cols]
 
 
 def format_region4_for_display(df4: pd.DataFrame) -> pd.DataFrame:
@@ -573,19 +589,13 @@ def build_region4_email_html(df4):
 
     for col in ["本月加總", "次月加總", "本月家電加總", "次月家電加總", "儲值金"]:
         if col in mail_df.columns:
-            mail_df[col] = mail_df[col].apply(
-                lambda x: f"{int(x):,}" if pd.notna(x) else ""
-            )
+            mail_df[col] = mail_df[col].apply(lambda x: f"{int(x):,}" if pd.notna(x) else "")
 
     if "本月佔比" in mail_df.columns:
-        mail_df["本月佔比"] = mail_df["本月佔比"].apply(
-            lambda x: f"{x:.2%}" if pd.notna(x) else ""
-        )
+        mail_df["本月佔比"] = mail_df["本月佔比"].apply(lambda x: f"{x:.2%}" if pd.notna(x) else "")
 
     if "次月佔比" in mail_df.columns:
-        mail_df["次月佔比"] = mail_df["次月佔比"].apply(
-            lambda x: f"{x:.2%}" if pd.notna(x) else ""
-        )
+        mail_df["次月佔比"] = mail_df["次月佔比"].apply(lambda x: f"{x:.2%}" if pd.notna(x) else "")
 
     html_table = mail_df.to_html(index=False, border=0)
 
@@ -677,6 +687,7 @@ def append_execution_log(df4: pd.DataFrame, trigger: str):
 
 
 def load_execution_log_for_current_month() -> pd.DataFrame:
+    ensure_dirs()
     now = now_dt()
     exec_file = os.path.join(EXEC_LOG_DIR, now.strftime("%Y%m") + ".csv")
     if not os.path.exists(exec_file):
@@ -695,7 +706,7 @@ def append_daily_overview_history(daily_df: pd.DataFrame, trigger: str):
 
     total_today = 0
     if not daily_df.empty and "全區合計" in daily_df.columns:
-        first_row = daily_df.iloc[0]
+        first_row = daily_df.iloc[-1]
         total_today = int(first_row.get("全區合計", 0))
 
     row = {
@@ -720,6 +731,7 @@ def append_daily_overview_history(daily_df: pd.DataFrame, trigger: str):
 
 
 def load_daily_history_for_current_month() -> pd.DataFrame:
+    ensure_dirs()
     now = now_dt()
     month_file = os.path.join(DAILY_HISTORY_DIR, now.strftime("%Y%m") + ".csv")
     if not os.path.exists(month_file):
@@ -733,6 +745,7 @@ def delete_daily_history_rows(ids):
     if not ids:
         return 0
 
+    ensure_dirs()
     now = now_dt()
     month_file = os.path.join(DAILY_HISTORY_DIR, now.strftime("%Y%m") + ".csv")
     if not os.path.exists(month_file):
@@ -745,13 +758,13 @@ def delete_daily_history_rows(ids):
     return before - len(df)
 
 
-def persist_dashboard_payload(df4: pd.DataFrame, daily_df: pd.DataFrame, email_html: str):
+def persist_dashboard_payload(df4: pd.DataFrame, daily_df: pd.DataFrame, email_html: str, error_msg: Optional[str] = None):
     ensure_dirs()
 
     now = now_dt()
     stamp = now.strftime("%Y%m%d_%H%M%S")
-    day_folder = os.path.join(SNAPSHOT_DIR, now.strftime("%Y%m"))
-    os.makedirs(day_folder, exist_ok=True)
+    month_folder = os.path.join(SNAPSHOT_DIR, now.strftime("%Y%m"))
+    os.makedirs(month_folder, exist_ok=True)
 
     latest_df4 = os.path.join(LATEST_DIR, "df4.csv")
     latest_daily = os.path.join(LATEST_DIR, "daily_df.csv")
@@ -762,17 +775,18 @@ def persist_dashboard_payload(df4: pd.DataFrame, daily_df: pd.DataFrame, email_h
     daily_df.to_csv(latest_daily, index=False, encoding="utf-8-sig")
 
     with open(latest_html, "w", encoding="utf-8") as f:
-        f.write(email_html)
+        f.write(email_html or "")
 
     meta = {
         "updated_at": now.strftime("%Y-%m-%d %H:%M:%S"),
         "df4_rows": int(len(df4)),
         "daily_rows": int(len(daily_df)),
+        "error": error_msg,
     }
     with open(latest_meta, "w", encoding="utf-8") as f:
         json.dump(meta, f, ensure_ascii=False, indent=2)
 
-    snapshot_prefix = os.path.join(day_folder, stamp)
+    snapshot_prefix = os.path.join(month_folder, stamp)
     df4.to_csv(f"{snapshot_prefix}_df4.csv", index=False, encoding="utf-8-sig")
     daily_df.to_csv(f"{snapshot_prefix}_daily_df.csv", index=False, encoding="utf-8-sig")
 
@@ -780,7 +794,7 @@ def persist_dashboard_payload(df4: pd.DataFrame, daily_df: pd.DataFrame, email_h
         json.dump(meta, f, ensure_ascii=False, indent=2)
 
     with open(f"{snapshot_prefix}_email_preview.html", "w", encoding="utf-8") as f:
-        f.write(email_html)
+        f.write(email_html or "")
 
 
 def generate_sales_report(send_email=False, persist_dashboard=True, trigger="dashboard"):
@@ -800,16 +814,31 @@ def generate_sales_report(send_email=False, persist_dashboard=True, trigger="das
     if not enabled_cities:
         error_msg = "ACCOUNTS 沒有任何可用城市設定"
         log(f"❌ {error_msg}")
+
+        empty_df4 = pd.DataFrame(columns=[
+            "城市", "本月加總", "本月佔比", "次月加總", "次月佔比",
+            "本月家電加總", "次月家電加總", "儲值金"
+        ])
+        empty_daily = pd.DataFrame(columns=[
+            "日期",
+            "台北業績", "台北佔比",
+            "台中業績", "台中佔比",
+            "桃園業績", "桃園佔比",
+            "新竹業績", "新竹佔比",
+            "高雄業績", "高雄佔比",
+            "全區合計",
+        ])
+
+        if persist_dashboard:
+            persist_dashboard_payload(empty_df4, empty_daily, "", error_msg)
+
         return {
             "raw_df": pd.DataFrame(),
             "df1": pd.DataFrame(),
             "df2": pd.DataFrame(),
             "df3": pd.DataFrame(),
-            "df4": pd.DataFrame(columns=[
-                "城市", "本月加總", "本月佔比", "次月加總", "次月佔比",
-                "本月家電加總", "次月家電加總", "儲值金"
-            ]),
-            "daily_df": pd.DataFrame(),
+            "df4": empty_df4,
+            "daily_df": empty_daily,
             "email_html": "",
             "updated_at": now_dt().strftime("%Y-%m-%d %H:%M:%S"),
             "execution_log_df": load_execution_log_for_current_month(),
@@ -824,7 +853,6 @@ def generate_sales_report(send_email=False, persist_dashboard=True, trigger="das
 
         try:
             login(session, acc["email"], acc["password"])
-
             city_row_count = 0
 
             for label, (s, e) in {
@@ -890,10 +918,18 @@ def generate_sales_report(send_email=False, persist_dashboard=True, trigger="das
             "城市", "本月加總", "本月佔比", "次月加總", "次月佔比",
             "本月家電加總", "次月家電加總", "儲值金"
         ])
-        empty_daily = pd.DataFrame()
+        empty_daily = pd.DataFrame(columns=[
+            "日期",
+            "台北業績", "台北佔比",
+            "台中業績", "台中佔比",
+            "桃園業績", "桃園佔比",
+            "新竹業績", "新竹佔比",
+            "高雄業績", "高雄佔比",
+            "全區合計",
+        ])
 
         if persist_dashboard:
-            persist_dashboard_payload(empty_df4, empty_daily, "")
+            persist_dashboard_payload(empty_df4, empty_daily, "", error_msg)
 
         return {
             "raw_df": pd.DataFrame(),
@@ -914,13 +950,20 @@ def generate_sales_report(send_email=False, persist_dashboard=True, trigger="das
     df3 = build_region3_df(df2)
     df4 = build_region4_df(df2)
     daily_df = build_daily_overview_df(raw_df)
+
+    log(f"raw_df columns = {list(raw_df.columns)}")
+    log(f"raw_df 前5筆 = {raw_df.head().to_dict('records')}")
+    log(f"daily_df 筆數 = {len(daily_df)}")
+
     email_html = build_region4_email_html(df4)
 
     append_execution_log(df4, trigger=trigger)
     append_daily_overview_history(daily_df, trigger=trigger)
 
+    error_msg = None if not city_errors else " / ".join(city_errors)
+
     if persist_dashboard:
-        persist_dashboard_payload(df4, daily_df, email_html)
+        persist_dashboard_payload(df4, daily_df, email_html, error_msg)
 
     if send_email:
         send_region4_email(df4)
@@ -936,8 +979,9 @@ def generate_sales_report(send_email=False, persist_dashboard=True, trigger="das
         "updated_at": now_dt().strftime("%Y-%m-%d %H:%M:%S"),
         "execution_log_df": load_execution_log_for_current_month(),
         "daily_history_df": load_daily_history_for_current_month(),
-        "error": None if not city_errors else " / ".join(city_errors),
+        "error": error_msg,
     }
+
 
 def main():
     trigger = "schedule"
