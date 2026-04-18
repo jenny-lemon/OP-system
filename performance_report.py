@@ -953,12 +953,14 @@ def generate_sales_report(send_email=False, persist_dashboard=True, trigger="das
     df2 = build_region2_df(raw_df)
     df3 = build_region3_df(df2)
     df4 = build_region4_df(df2)
-    # ❗ 改這裡（重點）
+
+    # 當月每日業績總覽：直接由 df4 轉成一列 snapshot
     daily_df = build_daily_overview_df(df4)
 
     log(f"raw_df columns = {list(raw_df.columns)}")
     log(f"raw_df 前5筆 = {raw_df.head().to_dict('records')}")
-    log(f"daily_df 筆數 = {len(daily_df)}")
+    log(f"df4 rows = {len(df4)}")
+    log(f"daily_df rows = {len(daily_df)}")
 
     email_html = build_region4_email_html(df4)
 
