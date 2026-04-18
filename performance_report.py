@@ -790,7 +790,14 @@ def generate_sales_report(send_email=False, persist_dashboard=True, trigger="das
     (m_start, m_end), (n_start, n_end) = get_ranges()
     merged = {}
 
-    enabled_cities = get_enabled_cities()
+    enabled_cities = [city for city in CITY_ORDER if city in ACCOUNTS]
+    missing_cities = [city for city in CITY_ORDER if city not in ACCOUNTS]
+
+    if missing_cities:
+        log(f"⚠️ ACCOUNTS 缺少城市設定，已略過：{', '.join(missing_cities)}")
+
+    if not enabled_cities:
+        raise RuntimeError("ACCOUNTS 沒有任何可用城市設定")
 
     for city in enabled_cities:
         log(f"===== {city} =====")
