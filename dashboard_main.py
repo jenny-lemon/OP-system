@@ -128,11 +128,11 @@ MAIN_REPORT_TASKS = [
 ]
 
 MANUAL_TASKS = [
-    {"name": "排班統計表", "cmd": f'cd "{BASE_DIR}" && /usr/bin/python3 schedule_report.py'},
-    {"name": "專員班表", "cmd": f'cd "{BASE_DIR}" && /usr/bin/python3 staff_schedule.py'},
-    {"name": "專員個資", "cmd": f'cd "{BASE_DIR}" && /usr/bin/python3 staff_info.py'},
-    {"name": "訂單資料", "cmd": f'cd "{BASE_DIR}" && /usr/bin/python3 orders_report.py'},
-    {"name": "業績報表", "cmd": f'cd "{BASE_DIR}" && /usr/bin/python3 performance_report.py dashboard false'},
+    {"name": "排班統計表", "cmd": f'cd "{BASE_DIR}" && "{PYTHON_CMD}" schedule_report.py'},
+    {"name": "專員班表", "cmd": f'cd "{BASE_DIR}" && "{PYTHON_CMD}" staff_schedule.py'},
+    {"name": "專員個資", "cmd": f'cd "{BASE_DIR}" && "{PYTHON_CMD}" staff_info.py'},
+    {"name": "訂單資料", "cmd": f'cd "{BASE_DIR}" && "{PYTHON_CMD}" orders_report.py'},
+    {"name": "業績報表", "cmd": f'cd "{BASE_DIR}" && "{PYTHON_CMD}" performance_report.py dashboard false'},
 ]
 
 
