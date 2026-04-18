@@ -726,6 +726,21 @@ def load_execution_log_for_current_month() -> pd.DataFrame:
         ])
     return pd.read_csv(exec_file)
 
+def delete_execution_log_rows(ids):
+    if not ids:
+        return 0
+
+    ensure_dirs()
+    now = now_dt()
+    exec_file = os.path.join(EXEC_LOG_DIR, now.strftime("%Y%m") + ".csv")
+    if not os.path.exists(exec_file):
+        return 0
+
+    df = pd.read_csv(exec_file, encoding="utf-8-sig")
+    before = len(df)
+    df = df[~df["id"].astype(str).isin([str(x) for x in ids])].copy()
+    df.to_csv(exec_file, index=False, encoding="utf-8-sig")
+    return before - len(df)
 
 def append_daily_overview_history(daily_df: pd.DataFrame, trigger: str):
     ensure_dirs()
