@@ -672,6 +672,8 @@ def render_sales_page():
     st.markdown('<div class="page-title">業績報表</div>', unsafe_allow_html=True)
     st.markdown('<div class="page-subtitle">LATEST + EXECUTION LOG</div>', unsafe_allow_html=True)
 
+    result = None
+
     b1, b2, b3 = st.columns(3)
 
     with b1:
@@ -682,8 +684,6 @@ def render_sales_page():
                     persist_dashboard=True,
                     trigger="dashboard",
                 )
-            st.success(f"更新完成：{result['updated_at']}")
-            st.rerun()
 
     with b2:
         if st.button("📧 寄送目前結果", key="sales_send", use_container_width=True):
@@ -693,25 +693,45 @@ def render_sales_page():
                     persist_dashboard=True,
                     trigger="dashboard",
                 )
-            st.success(f"已寄送：{result['updated_at']}")
-            st.rerun()
 
     with b3:
         if st.button("📂 重新讀取已存資料", key="sales_reload", use_container_width=True):
             st.rerun()
 
-    payload = load_sales_latest_payload()
-    df4 = payload["df4"]
-    daily_df = payload["daily_df"]
-    meta = payload["meta"]
-    email_html = payload["email_html"]
+    # -------------------------------------------------
+    # 優先顯示剛更新的結果
+    # 沒有剛更新時，才讀 latest
+    # -------------------------------------------------
+    if result is not None:
+        df4 = result.get("df4", pd.DataFrame())
+        daily_df = result.get("daily_df", pd.DataFrame())
+        email_html = result.get("email_html", "")
+        updated_at = result.get("updated_at", now_taipei().strftime("%Y-%m-%d %H:%M:%S"))
+        execution_log_df = result.get("execution_log_df", pd.DataFrame())
+        daily_history_df = result.get("daily_history_df", pd.DataFrame())
+        error_msg = result.get("error")
+    else:
+        payload = load_sales_latest_payload()
+        df4 = payload.get("df4", pd.DataFrame())
+        daily_df = payload.get("daily_df", pd.DataFrame())
+        meta = payload.get("meta", {})
+        email_html = payload.get("email_html", "")
+        updated_at = meta.get("updated_at", "尚未產生資料")
+        execution_log_df = load_execution_log_for_current_month()
+        daily_history_df = load_daily_history_for_current_month()
+        error_msg = meta.get("error") if isinstance(meta, dict) else None
 
-    execution_log_df = load_execution_log_for_current_month()
-    daily_history_df = load_daily_history_for_current_month()
+    # -------------------------------------------------
+    # 顯示錯誤訊息，但不要讓整頁炸掉
+    # -------------------------------------------------
+    if error_msg:
+        st.error(error_msg)
 
-    updated_at = meta.get("updated_at", "尚未產生資料")
     st.info(f"最新更新時間：{updated_at}")
 
+    # -------------------------------------------------
+    # KPI
+    # -------------------------------------------------
     total = get_sales_total_row(df4)
     k1, k2, k3, k4 = st.columns(4)
 
@@ -726,6 +746,9 @@ def render_sales_page():
         k3.metric("本月家電加總", sales_fmt_int(total.get("本月家電加總", 0)))
         k4.metric("儲值金", sales_fmt_int(total.get("儲值金", 0)))
 
+    # -------------------------------------------------
+    # 各區月度摘要
+    # -------------------------------------------------
     st.markdown('<div class="section-card"><div class="section-title">各區月度摘要</div>', unsafe_allow_html=True)
     if df4.empty:
         st.warning("目前沒有資料")
@@ -733,6 +756,9 @@ def render_sales_page():
         st.dataframe(style_sales_df4(df4), use_container_width=True, hide_index=True)
     st.markdown('</div>', unsafe_allow_html=True)
 
+    # -------------------------------------------------
+    # 當月每日業績總覽
+    # -------------------------------------------------
     st.markdown('<div class="section-card"><div class="section-title">當月每日業績總覽</div>', unsafe_allow_html=True)
     if daily_df.empty:
         st.warning("目前沒有資料")
@@ -740,6 +766,9 @@ def render_sales_page():
         st.dataframe(style_sales_daily(daily_df), use_container_width=True, hide_index=True)
     st.markdown('</div>', unsafe_allow_html=True)
 
+    # -------------------------------------------------
+    # 當月累積執行紀錄
+    # -------------------------------------------------
     st.markdown('<div class="section-card"><div class="section-title">當月累積執行紀錄</div>', unsafe_allow_html=True)
     if execution_log_df.empty:
         st.warning("目前沒有執行紀錄")
@@ -747,6 +776,9 @@ def render_sales_page():
         st.dataframe(style_sales_exec(execution_log_df), use_container_width=True, hide_index=True)
     st.markdown('</div>', unsafe_allow_html=True)
 
+    # -------------------------------------------------
+    # 當月每日業績總覽留存紀錄
+    # -------------------------------------------------
     st.markdown('<div class="section-card"><div class="section-title">當月每日業績總覽留存紀錄</div>', unsafe_allow_html=True)
     if daily_history_df.empty:
         st.warning("目前沒有留存紀錄")
@@ -766,6 +798,9 @@ def render_sales_page():
         st.dataframe(style_sales_history(display_history), use_container_width=True, hide_index=True)
     st.markdown('</div>', unsafe_allow_html=True)
 
+    # -------------------------------------------------
+    # 信件預覽
+    # -------------------------------------------------
     st.markdown('<div class="section-card"><div class="section-title">信件預覽</div>', unsafe_allow_html=True)
     if email_html:
         st.components.v1.html(email_html, height=520, scrolling=True)
