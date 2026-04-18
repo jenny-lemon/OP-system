@@ -555,7 +555,6 @@ def render_sales_page():
         email_html = result.get("email_html", "")
         updated_at = result.get("updated_at", now_taipei().strftime("%Y-%m-%d %H:%M:%S"))
         execution_log_df = result.get("execution_log_df", pd.DataFrame())
-        daily_history_df = result.get("daily_history_df", pd.DataFrame())
         error_msg = result.get("error")
     else:
         payload = load_sales_latest_payload()
@@ -565,7 +564,6 @@ def render_sales_page():
         email_html = payload.get("email_html", "")
         updated_at = meta.get("updated_at", "尚未產生資料")
         execution_log_df = load_execution_log_for_current_month()
-        daily_history_df = load_daily_history_for_current_month()
         error_msg = meta.get("error") if isinstance(meta, dict) else None
 
     if error_msg:
@@ -587,6 +585,7 @@ def render_sales_page():
         k3.metric("本月家電加總", sales_fmt_int(total.get("本月家電加總", 0)))
         k4.metric("儲值金", sales_fmt_int(total.get("儲值金", 0)))
 
+    # 各區月度摘要
     st.markdown('<div class="section-card"><div class="section-title">各區月度摘要</div>', unsafe_allow_html=True)
     if df4.empty:
         st.warning("目前沒有資料")
@@ -604,13 +603,17 @@ def render_sales_page():
             })
             .set_properties(subset=["城市"], **{"text-align": "left"})
             .set_properties(
-                subset=["本月加總", "本月佔比", "次月加總", "次月佔比", "本月家電加總", "次月家電加總", "儲值金"],
+                subset=[
+                    "本月加總", "本月佔比", "次月加總", "次月佔比",
+                    "本月家電加總", "次月家電加總", "儲值金"
+                ],
                 **{"text-align": "right"}
             )
         )
         st.dataframe(summary_style, use_container_width=True, hide_index=True)
     st.markdown('</div>', unsafe_allow_html=True)
 
+    # 當月每日業績總覽
     st.markdown('<div class="section-card"><div class="section-title">當月每日業績總覽</div>', unsafe_allow_html=True)
     if daily_df.empty:
         st.warning("目前沒有資料")
@@ -645,14 +648,23 @@ def render_sales_page():
             .set_properties(subset=["日期"], **{"text-align": "left"})
             .set_properties(subset=[c for c in exist_cols if c != "日期"], **{"text-align": "right"})
         )
-
         st.dataframe(daily_style, use_container_width=True, hide_index=True)
     st.markdown('</div>', unsafe_allow_html=True)
 
+    # 當月累積執行紀錄（這裡加刪除功能）
     st.markdown('<div class="section-card"><div class="section-title">當月累積執行紀錄</div>', unsafe_allow_html=True)
     if execution_log_df.empty:
         st.warning("目前沒有執行紀錄")
     else:
+        exec_ids = execution_log_df["id"].astype(str).tolist()
+        selected_exec_ids = st.multiselect("勾選要刪除的執行紀錄", options=exec_ids)
+
+        if st.button("🗑 刪除勾選列", key="delete_execution_log_btn", use_container_width=True):
+            from performance_report import delete_execution_log_rows
+            deleted = delete_execution_log_rows(selected_exec_ids)
+            st.success(f"已刪除 {deleted} 筆執行紀錄")
+            st.rerun()
+
         exec_style = (
             execution_log_df.style
             .format({
@@ -663,39 +675,15 @@ def render_sales_page():
                 "儲值金": "{:,.0f}",
             })
             .set_properties(subset=["id", "執行時間", "來源"], **{"text-align": "left"})
-            .set_properties(subset=["本月加總", "次月加總", "本月家電加總", "次月家電加總", "儲值金"], **{"text-align": "right"})
+            .set_properties(
+                subset=["本月加總", "次月加總", "本月家電加總", "次月家電加總", "儲值金"],
+                **{"text-align": "right"}
+            )
         )
         st.dataframe(exec_style, use_container_width=True, hide_index=True)
     st.markdown('</div>', unsafe_allow_html=True)
 
-    st.markdown('<div class="section-card"><div class="section-title">當月每日業績總覽留存紀錄</div>', unsafe_allow_html=True)
-    if daily_history_df.empty:
-        st.warning("目前沒有留存紀錄")
-    else:
-        selectable_ids = daily_history_df["id"].astype(str).tolist()
-        selected_ids = st.multiselect("勾選要刪除的紀錄", options=selectable_ids)
-
-        if st.button("🗑 刪除勾選列", key="sales_delete_btn", use_container_width=True):
-            deleted = delete_daily_history_rows(selected_ids)
-            st.success(f"已刪除 {deleted} 筆")
-            st.rerun()
-
-        display_history = daily_history_df.copy()
-        if "daily_json" in display_history.columns:
-            display_history = display_history.drop(columns=["daily_json"])
-
-        history_style = display_history.style
-        if "今日全區合計" in display_history.columns:
-            history_style = (
-                history_style
-                .format({"今日全區合計": "{:,.0f}"})
-                .set_properties(subset=[c for c in ["id", "執行時間", "來源", "日期", "daily_rows"] if c in display_history.columns], **{"text-align": "left"})
-                .set_properties(subset=[c for c in ["今日全區合計"] if c in display_history.columns], **{"text-align": "right"})
-            )
-
-        st.dataframe(history_style, use_container_width=True, hide_index=True)
-    st.markdown('</div>', unsafe_allow_html=True)
-
+    # 信件預覽
     st.markdown('<div class="section-card"><div class="section-title">信件預覽</div>', unsafe_allow_html=True)
     if email_html:
         st.components.v1.html(email_html, height=520, scrolling=True)
