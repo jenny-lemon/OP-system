@@ -511,6 +511,8 @@ def build_region4_df(region2_df: pd.DataFrame) -> pd.DataFrame:
 
 def build_daily_overview_df(df4: pd.DataFrame) -> pd.DataFrame:
     cols = [
+        "id",
+        "來源",
         "日期",
         "台北業績", "台北佔比",
         "台中業績", "台中佔比",
@@ -524,7 +526,9 @@ def build_daily_overview_df(df4: pd.DataFrame) -> pd.DataFrame:
         log("⚠️ build_daily_overview_df：df4 為空")
         return pd.DataFrame(columns=cols)
 
-    now_str = now_dt().strftime("%Y/%m/%d %H:%M")
+    now_obj = now_dt()
+    now_str = now_obj.strftime("%Y/%m/%d %H:%M")
+    row_id = now_obj.strftime("%Y%m%d%H%M%S")
 
     def get_val(city, col):
         try:
@@ -535,7 +539,22 @@ def build_daily_overview_df(df4: pd.DataFrame) -> pd.DataFrame:
         except Exception:
             return 0
 
-    out = pd.DataFrame([{
+    latest_daily = os.path.join(LATEST_DIR, "daily_df.csv")
+    if os.path.exists(latest_daily):
+        try:
+            old_df = pd.read_csv(latest_daily, encoding="utf-8-sig")
+        except Exception:
+            old_df = pd.DataFrame(columns=cols)
+    else:
+        old_df = pd.DataFrame(columns=cols)
+
+    for c in cols:
+        if c not in old_df.columns:
+            old_df[c] = ""
+
+    new_row = {
+        "id": row_id,
+        "來源": "dashboard",
         "日期": now_str,
         "台北業績": get_val("台北", "本月加總"),
         "台北佔比": get_val("台北", "本月佔比"),
@@ -548,7 +567,13 @@ def build_daily_overview_df(df4: pd.DataFrame) -> pd.DataFrame:
         "高雄業績": get_val("高雄", "本月加總"),
         "高雄佔比": get_val("高雄", "本月佔比"),
         "全區合計": get_val("加總", "本月加總"),
-    }])
+    }
+
+    out = pd.concat([old_df[cols], pd.DataFrame([new_row])], ignore_index=True)
+
+    current_month = now_obj.strftime("%Y/%m")
+    out = out[out["日期"].astype(str).str.startswith(current_month)].copy()
+    out = out.reset_index(drop=True)
 
     log(f"✅ build_daily_overview_df 完成，筆數 = {len(out)}")
     return out[cols]
@@ -632,8 +657,6 @@ def send_region4_email(df4, recipient="jenny@lemonclean.com.tw"):
     log(f"✅ 已寄出：{recipient}")
 
 
-# ── execution log：保留函式，但主流程停用 ─────────────────────────────────────
-
 def append_execution_log(df4: pd.DataFrame, trigger: str):
     ensure_dirs()
 
@@ -670,34 +693,15 @@ def append_execution_log(df4: pd.DataFrame, trigger: str):
 
 def load_execution_log_for_current_month() -> pd.DataFrame:
     ensure_dirs()
-    now = now_dt()
-    exec_file = os.path.join(EXEC_LOG_DIR, now.strftime("%Y%m") + ".csv")
-    if not os.path.exists(exec_file):
-        return pd.DataFrame(columns=[
-            "id", "執行時間", "來源", "本月加總", "次月加總",
-            "本月家電加總", "次月家電加總", "儲值金"
-        ])
-    return pd.read_csv(exec_file, encoding="utf-8-sig")
+    return pd.DataFrame(columns=[
+        "id", "執行時間", "來源", "本月加總", "次月加總",
+        "本月家電加總", "次月家電加總", "儲值金"
+    ])
 
 
 def delete_execution_log_rows(ids):
-    if not ids:
-        return 0
+    return 0
 
-    ensure_dirs()
-    now = now_dt()
-    exec_file = os.path.join(EXEC_LOG_DIR, now.strftime("%Y%m") + ".csv")
-    if not os.path.exists(exec_file):
-        return 0
-
-    df = pd.read_csv(exec_file, encoding="utf-8-sig")
-    before = len(df)
-    df = df[~df["id"].astype(str).isin([str(x) for x in ids])].copy()
-    df.to_csv(exec_file, index=False, encoding="utf-8-sig")
-    return before - len(df)
-
-
-# ── 每日業績總覽累積 ──────────────────────────────────────────────────────────
 
 def append_daily_overview_history(daily_df: pd.DataFrame, trigger: str):
     ensure_dirs()
@@ -759,8 +763,6 @@ def delete_daily_history_rows(ids):
     return before - len(df)
 
 
-# ── 輸出檔案路徑紀錄 ──────────────────────────────────────────────────────────
-
 def append_output_file_log(category: str, file_path: str, trigger: str):
     ensure_dirs()
 
@@ -790,8 +792,6 @@ def load_output_file_log() -> pd.DataFrame:
         return pd.DataFrame(columns=["id", "時間", "分類", "檔名", "完整路徑", "trigger"])
     return pd.read_csv(OUTPUT_LOG_FILE, encoding="utf-8-sig")
 
-
-# ── Dashboard payload ─────────────────────────────────────────────────────────
 
 def persist_dashboard_payload(
     df4: pd.DataFrame,
@@ -877,7 +877,7 @@ def generate_sales_report(send_email=False, persist_dashboard=True, trigger="das
             "本月家電加總", "次月家電加總", "儲值金"
         ])
         empty_daily = pd.DataFrame(columns=[
-            "日期",
+            "id", "來源", "日期",
             "台北業績", "台北佔比",
             "台中業績", "台中佔比",
             "桃園業績", "桃園佔比",
@@ -899,7 +899,7 @@ def generate_sales_report(send_email=False, persist_dashboard=True, trigger="das
             "email_html": "",
             "updated_at": now_dt().strftime("%Y-%m-%d %H:%M:%S"),
             "execution_log_df": pd.DataFrame(),
-            "daily_history_df": load_daily_history_for_current_month(),
+            "daily_history_df": pd.DataFrame(),
             "output_file_log_df": load_output_file_log(),
             "error": error_msg,
         }
@@ -993,7 +993,7 @@ def generate_sales_report(send_email=False, persist_dashboard=True, trigger="das
             "本月家電加總", "次月家電加總", "儲值金"
         ])
         empty_daily = pd.DataFrame(columns=[
-            "日期",
+            "id", "來源", "日期",
             "台北業績", "台北佔比",
             "台中業績", "台中佔比",
             "桃園業績", "桃園佔比",
@@ -1015,7 +1015,7 @@ def generate_sales_report(send_email=False, persist_dashboard=True, trigger="das
             "email_html": "",
             "updated_at": now_dt().strftime("%Y-%m-%d %H:%M:%S"),
             "execution_log_df": pd.DataFrame(),
-            "daily_history_df": load_daily_history_for_current_month(),
+            "daily_history_df": pd.DataFrame(),
             "output_file_log_df": load_output_file_log(),
             "error": error_msg,
         }
@@ -1026,6 +1026,8 @@ def generate_sales_report(send_email=False, persist_dashboard=True, trigger="das
     df4 = build_region4_df(df2)
 
     daily_df = build_daily_overview_df(df4)
+    if not daily_df.empty and "來源" in daily_df.columns:
+        daily_df.loc[daily_df.index[-1], "來源"] = trigger
 
     log(f"raw_df columns = {list(raw_df.columns)}")
     log(f"raw_df 前5筆 = {raw_df.head().to_dict('records')}")
@@ -1036,11 +1038,6 @@ def generate_sales_report(send_email=False, persist_dashboard=True, trigger="das
     log(f"daily_df rows = {len(daily_df)}")
 
     email_html = build_region4_email_html(df4)
-
-    # 停用舊的 execution log；保留函式避免其他檔案 import 壞掉
-    # append_execution_log(df4, trigger=trigger)
-
-    append_daily_overview_history(daily_df, trigger=trigger)
 
     error_msg = None if not city_errors else " / ".join(city_errors)
 
@@ -1060,7 +1057,7 @@ def generate_sales_report(send_email=False, persist_dashboard=True, trigger="das
         "email_html": email_html,
         "updated_at": now_dt().strftime("%Y-%m-%d %H:%M:%S"),
         "execution_log_df": pd.DataFrame(),
-        "daily_history_df": load_daily_history_for_current_month(),
+        "daily_history_df": pd.DataFrame(),
         "output_file_log_df": load_output_file_log(),
         "error": error_msg,
     }
