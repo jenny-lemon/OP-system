@@ -4,7 +4,6 @@ import calendar
 import smtplib
 from email.mime.text import MIMEText
 from datetime import datetime, date
-from pathlib import Path
 from typing import Optional
 
 import pandas as pd
@@ -238,134 +237,76 @@ def normalize_date_text(text: str) -> Optional[str]:
 
     return None
 
-def parse_daily_table(html: str) -> pd.DataFrame:
+
+def parse_html(html):
     soup = BeautifulSoup(html, "html.parser")
     tables = soup.find_all("table")
+    results = []
 
-    data = []
+    date_candidates = ["服務日期", "清潔日期", "日期", "預約日期", "服務日", "clean_date"]
 
     for table in tables:
-        rows = table.find_all("tr")
-        current_city = None
+        trs = table.find_all("tr")
+        rows = []
 
-        for tr in rows:
-            cols = [td.get_text(strip=True) for td in tr.find_all(["td", "th"])]
+        for tr in trs:
+            cells = tr.find_all(["th", "td"])
+            row = [c.get_text(" ", strip=True) for c in cells]
+            if any(str(x).strip() for x in row):
+                rows.append(row)
 
-            if not cols:
+        if not rows:
+            continue
+
+        header = [str(x).strip() for x in rows[0]]
+
+        # 月摘要需要的表：至少得有金額欄
+        if "已付款金額" not in header and "待付款金額" not in header:
+            continue
+
+        paid_idx = header.index("已付款金額") if "已付款金額" in header else None
+        unpaid_idx = header.index("待付款金額") if "待付款金額" in header else None
+
+        date_idx = None
+        for name in date_candidates:
+            if name in header:
+                date_idx = header.index(name)
+                break
+
+        income_type = detect_income_type(header[0] if header else "")
+        source = "儲值金表" if income_type == "儲值金" else "主表"
+
+        for row in rows[1:]:
+            if not row:
                 continue
 
-            # 城市判斷
-            if cols[0] in CITY_ORDER:
-                current_city = cols[0]
+            service = normalize_service(row[0] if len(row) > 0 else "")
+            if not service:
+                continue
+            if service == "加總":
+                continue
+            if service.startswith("LC"):
                 continue
 
-            raw_date = cols[0]
-            parsed_date = None
+            paid = safe_int(row[paid_idx]) if paid_idx is not None and len(row) > paid_idx else 0
+            unpaid = safe_int(row[unpaid_idx]) if unpaid_idx is not None and len(row) > unpaid_idx else 0
 
-            try:
-                if "-" in raw_date:
-                    parsed_date = datetime.strptime(raw_date, "%Y-%m-%d")
-                elif "/" in raw_date:
-                    today = datetime.today()
-                    parsed_date = datetime.strptime(
-                        f"{today.year}/{raw_date}", "%Y/%m/%d"
-                    )
-            except:
-                pass
+            service_date = None
+            if date_idx is not None and len(row) > date_idx:
+                service_date = normalize_date_text(row[date_idx])
 
-            if parsed_date is None:
-                continue
-
-            try:
-                paid = int(cols[1].replace(",", "")) if len(cols) > 1 else 0
-                unpaid = int(cols[2].replace(",", "")) if len(cols) > 2 else 0
-            except:
-                paid = 0
-                unpaid = 0
-
-            data.append({
-                "城市": current_city,
-                "日期": parsed_date,
-                "月份": "本月",
+            results.append({
+                "收入類型": income_type,
+                "資料來源": source,
+                "服務": service,
+                "子項目": "",
+                "日期": service_date,
                 "已付款": paid,
                 "待付款": unpaid,
             })
 
-    df = pd.DataFrame(data)
-
-    log(f"✅ parse_daily_table rows = {len(df)}")
-    return df
-
-def parse_html(html: str) -> pd.DataFrame:
-    soup = BeautifulSoup(html, "html.parser")
-    table = soup.find("table")
-
-    if table is None:
-        log("❌ parse_html：找不到 table")
-        return pd.DataFrame()
-
-    rows = table.find_all("tr")
-    data = []
-
-    current_city = None
-
-    for tr in rows:
-        cols = [td.get_text(strip=True) for td in tr.find_all(["td", "th"])]
-
-        if not cols:
-            continue
-
-        # 👉 偵測城市（例如：台北、台中）
-        if cols[0] in CITY_ORDER:
-            current_city = cols[0]
-            continue
-
-        # 👉 日期列（關鍵！！！）
-        # 通常長這樣：2026-04-01 或 4/1
-        raw_date = cols[0]
-
-        parsed_date = None
-
-        try:
-            # yyyy-mm-dd
-            if "-" in raw_date:
-                parsed_date = datetime.strptime(raw_date, "%Y-%m-%d")
-
-            # m/d
-            elif "/" in raw_date:
-                today = datetime.today()
-                parsed_date = datetime.strptime(
-                    f"{today.year}/{raw_date}", "%Y/%m/%d"
-                )
-
-        except Exception:
-            pass
-
-        if parsed_date is None:
-            continue
-
-        # 👉 金額欄（依你後台格式）
-        try:
-            paid = int(cols[1].replace(",", "")) if len(cols) > 1 else 0
-            unpaid = int(cols[2].replace(",", "")) if len(cols) > 2 else 0
-        except Exception:
-            paid = 0
-            unpaid = 0
-
-        data.append({
-            "城市": current_city,
-            "日期": parsed_date,
-            "月份": "本月",
-            "已付款": paid,
-            "待付款": unpaid,
-        })
-
-    df = pd.DataFrame(data)
-
-    log(f"✅ parse_html rows = {len(df)}")
-    log(f"columns = {list(df.columns)}")
-
-    return df
+    log(f"✅ parse_html rows = {len(results)}")
+    return results
 
 
 def to_category(service, income) -> Optional[str]:
@@ -592,28 +533,20 @@ def build_daily_overview_df(raw_df: pd.DataFrame) -> pd.DataFrame:
         "全區合計",
     ]
 
-    # 沒資料直接回空表
     if raw_df is None or raw_df.empty:
         return pd.DataFrame(columns=cols)
 
     work = raw_df.copy()
 
-    # 必要欄位不存在就回空表
-    required_cols = ["城市", "月份", "已付款", "待付款"]
+    required_cols = ["城市", "月份", "已付款", "待付款", "日期"]
     for c in required_cols:
         if c not in work.columns:
             log(f"⚠️ build_daily_overview_df 缺少欄位：{c}")
             return pd.DataFrame(columns=cols)
 
-    # 只取本月資料
     work = work[work["月份"] == "本月"].copy()
     if work.empty:
         log("⚠️ build_daily_overview_df：本月資料為空")
-        return pd.DataFrame(columns=cols)
-
-    # 日期欄位處理
-    if "日期" not in work.columns:
-        log("⚠️ build_daily_overview_df：raw_df 沒有 日期 欄位")
         return pd.DataFrame(columns=cols)
 
     work["日期"] = pd.to_datetime(work["日期"], errors="coerce")
@@ -624,48 +557,35 @@ def build_daily_overview_df(raw_df: pd.DataFrame) -> pd.DataFrame:
         return pd.DataFrame(columns=cols)
 
     work["日期"] = work["日期"].dt.date
-
-    # 業績 = 已付款 + 待付款
     work["已付款"] = pd.to_numeric(work["已付款"], errors="coerce").fillna(0)
     work["待付款"] = pd.to_numeric(work["待付款"], errors="coerce").fillna(0)
     work["業績"] = work["已付款"] + work["待付款"]
 
-    # 只保留城市清單內資料
     work = work[work["城市"].isin(CITY_ORDER)].copy()
     if work.empty:
         log("⚠️ build_daily_overview_df：篩完城市後沒有資料")
         return pd.DataFrame(columns=cols)
 
-    # 依日期、城市加總
-    grouped = (
-        work.groupby(["日期", "城市"], as_index=False)["業績"]
-        .sum()
-    )
-
+    grouped = work.groupby(["日期", "城市"], as_index=False)["業績"].sum()
     if grouped.empty:
         log("⚠️ build_daily_overview_df：groupby 後沒有資料")
         return pd.DataFrame(columns=cols)
 
-    # pivot 成你要的橫向格式基礎
     pivot = grouped.pivot(index="日期", columns="城市", values="業績").fillna(0)
 
-    # 補齊所有城市欄位
     for city in CITY_ORDER:
         if city not in pivot.columns:
             pivot[city] = 0
 
     pivot = pivot[CITY_ORDER]
 
-    # 只補到今天，不補未來
     today = datetime.today().date()
     first_day = date(today.year, today.month, 1)
     all_days = pd.date_range(first_day, today, freq="D").date
     pivot = pivot.reindex(all_days, fill_value=0)
 
-    # 全區合計
     pivot["全區合計"] = pivot.sum(axis=1)
 
-    # 組成最後要顯示的表
     out = pd.DataFrame(index=pivot.index)
     out["日期"] = [f"{d.month}/{d.day}" for d in pivot.index]
 
@@ -677,8 +597,6 @@ def build_daily_overview_df(raw_df: pd.DataFrame) -> pd.DataFrame:
         )
 
     out["全區合計"] = pivot["全區合計"].astype(int)
-
-    # 你現在畫面比較像是由月初到今天順排
     out = out.reset_index(drop=True)
 
     log(f"✅ build_daily_overview_df 完成，筆數 = {len(out)}")
@@ -817,8 +735,8 @@ def append_daily_overview_history(daily_df: pd.DataFrame, trigger: str):
 
     total_today = 0
     if not daily_df.empty and "全區合計" in daily_df.columns:
-        first_row = daily_df.iloc[-1]
-        total_today = int(first_row.get("全區合計", 0))
+        last_row = daily_df.iloc[-1]
+        total_today = int(last_row.get("全區合計", 0))
 
     row = {
         "id": now.strftime("%Y%m%d%H%M%S"),
