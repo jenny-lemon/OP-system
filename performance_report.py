@@ -3,7 +3,7 @@ import json
 import calendar
 import smtplib
 from email.mime.text import MIMEText
-from datetime import datetime, date
+from datetime import datetime
 from typing import Optional
 
 import pandas as pd
@@ -56,19 +56,6 @@ def ensure_dirs():
     os.makedirs(SNAPSHOT_DIR, exist_ok=True)
     os.makedirs(EXEC_LOG_DIR, exist_ok=True)
     os.makedirs(DAILY_HISTORY_DIR, exist_ok=True)
-
-
-def get_enabled_cities():
-    enabled = [city for city in CITY_ORDER if city in ACCOUNTS]
-    missing = [city for city in CITY_ORDER if city not in ACCOUNTS]
-
-    if missing:
-        log(f"⚠️ ACCOUNTS 缺少城市設定，已略過：{', '.join(missing)}")
-
-    if not enabled:
-        raise RuntimeError("ACCOUNTS 沒有任何可用城市設定")
-
-    return enabled
 
 
 def login(session, email, password):
@@ -260,7 +247,6 @@ def parse_html(html):
 
         header = [str(x).strip() for x in rows[0]]
 
-        # 月摘要需要的表：至少得有金額欄
         if "已付款金額" not in header and "待付款金額" not in header:
             continue
 
@@ -671,7 +657,7 @@ def append_execution_log(df4: pd.DataFrame, trigger: str):
     new_df = pd.DataFrame([row])
 
     if os.path.exists(exec_file):
-        old_df = pd.read_csv(exec_file)
+        old_df = pd.read_csv(exec_file, encoding="utf-8-sig")
         out_df = pd.concat([old_df, new_df], ignore_index=True)
     else:
         out_df = new_df
@@ -688,7 +674,8 @@ def load_execution_log_for_current_month() -> pd.DataFrame:
             "id", "執行時間", "來源", "本月加總", "次月加總",
             "本月家電加總", "次月家電加總", "儲值金"
         ])
-    return pd.read_csv(exec_file)
+    return pd.read_csv(exec_file, encoding="utf-8-sig")
+
 
 def delete_execution_log_rows(ids):
     if not ids:
@@ -706,6 +693,7 @@ def delete_execution_log_rows(ids):
     df.to_csv(exec_file, index=False, encoding="utf-8-sig")
     return before - len(df)
 
+
 def append_daily_overview_history(daily_df: pd.DataFrame, trigger: str):
     ensure_dirs()
 
@@ -715,7 +703,7 @@ def append_daily_overview_history(daily_df: pd.DataFrame, trigger: str):
     total_today = 0
     if not daily_df.empty and "全區合計" in daily_df.columns:
         last_row = daily_df.iloc[-1]
-        total_today = int(last_row.get("全區合計", 0))
+        total_today = int(float(last_row.get("全區合計", 0)))
 
     row = {
         "id": now.strftime("%Y%m%d%H%M%S"),
@@ -805,7 +793,210 @@ def persist_dashboard_payload(df4: pd.DataFrame, daily_df: pd.DataFrame, email_h
         f.write(email_html or "")
 
 
+def generate_sales_report(send_email=False, persist_dashboard=True, trigger="dashboard"):
+    log("🔥 開始業績報表")
 
+    ensure_dirs()
+    (m_start, m_end), (n_start, n_end) = get_ranges()
+    merged = {}
+    city_errors = []
+
+    enabled_cities = [city for city in CITY_ORDER if city in ACCOUNTS]
+    missing_cities = [city for city in CITY_ORDER if city not in ACCOUNTS]
+
+    if missing_cities:
+        log(f"⚠️ ACCOUNTS 缺少城市設定，已略過：{', '.join(missing_cities)}")
+
+    if not enabled_cities:
+        error_msg = "ACCOUNTS 沒有任何可用城市設定"
+        log(f"❌ {error_msg}")
+
+        empty_df4 = pd.DataFrame(columns=[
+            "城市", "本月加總", "本月佔比", "次月加總", "次月佔比",
+            "本月家電加總", "次月家電加總", "儲值金"
+        ])
+        empty_daily = pd.DataFrame(columns=[
+            "日期",
+            "台北業績", "台北佔比",
+            "台中業績", "台中佔比",
+            "桃園業績", "桃園佔比",
+            "新竹業績", "新竹佔比",
+            "高雄業績", "高雄佔比",
+            "全區合計",
+        ])
+
+        if persist_dashboard:
+            persist_dashboard_payload(empty_df4, empty_daily, "", error_msg)
+
+        return {
+            "raw_df": pd.DataFrame(),
+            "df1": pd.DataFrame(),
+            "df2": pd.DataFrame(),
+            "df3": pd.DataFrame(),
+            "df4": empty_df4,
+            "daily_df": empty_daily,
+            "email_html": "",
+            "updated_at": now_dt().strftime("%Y-%m-%d %H:%M:%S"),
+            "execution_log_df": load_execution_log_for_current_month(),
+            "daily_history_df": load_daily_history_for_current_month(),
+            "error": error_msg,
+        }
+
+    for city in enabled_cities:
+        log(f"===== {city} =====")
+        session = requests.Session()
+        acc = ACCOUNTS[city]
+
+        try:
+            login(session, acc["email"], acc["password"])
+            city_row_count = 0
+
+            for label, (s, e) in {
+                "本月": (m_start, m_end),
+                "下月": (n_start, n_end),
+            }.items():
+                for status in [1, 0]:
+                    for kw in get_keywords(city):
+                        url = build_url(s, e, status, kw)
+                        log(f"抓取：city={city} month={label} status={status} kw={kw} url={url}")
+
+                        res = session.get(url, headers=HEADERS, allow_redirects=True)
+                        res.raise_for_status()
+
+                        rows = parse_html(res.text)
+                        city_row_count += len(rows)
+
+                        if not rows:
+                            log(f"⚠️ {city} / {label} / status={status} / kw={kw} 沒抓到資料，HTML 長度={len(res.text)}")
+                            try:
+                                debug_dir = os.path.join(DASHBOARD_DIR, "_debug_html")
+                                os.makedirs(debug_dir, exist_ok=True)
+                                debug_name = f"{city}_{label}_status{status}_{(kw or 'ALL')}.html"
+                                debug_path = os.path.join(debug_dir, debug_name)
+                                with open(debug_path, "w", encoding="utf-8") as f:
+                                    f.write(res.text)
+                                log(f"📝 已輸出 debug html：{debug_path}")
+                            except Exception as dbg_e:
+                                log(f"⚠️ debug html 寫出失敗：{dbg_e}")
+
+                        for row in rows:
+                            key = (
+                                city,
+                                label,
+                                row["日期"],
+                                row["收入類型"],
+                                row["資料來源"],
+                                row["服務"],
+                                row["子項目"],
+                            )
+
+                            if key not in merged:
+                                merged[key] = {
+                                    "城市": city,
+                                    "月份": label,
+                                    "日期": row["日期"],
+                                    "收入類型": row["收入類型"],
+                                    "資料來源": row["資料來源"],
+                                    "服務": row["服務"],
+                                    "子項目": row["子項目"],
+                                    "已付款": 0,
+                                    "待付款": 0,
+                                }
+
+                            merged[key]["已付款"] += row["已付款"]
+                            merged[key]["待付款"] += row["待付款"]
+
+            if city_row_count == 0:
+                msg = f"{city}：登入成功，但沒有抓到任何表格資料"
+                city_errors.append(msg)
+                log(f"⚠️ {msg}")
+
+        except Exception as e:
+            msg = f"{city} 失敗：{e}"
+            city_errors.append(msg)
+            log(f"❌ {msg}")
+
+    raw_df = pd.DataFrame(merged.values())
+
+    if raw_df.empty:
+        error_msg = "沒有任何資料可輸出"
+        if city_errors:
+            error_msg += "；" + " / ".join(city_errors)
+
+        log(f"⚠️ {error_msg}")
+
+        empty_df4 = pd.DataFrame(columns=[
+            "城市", "本月加總", "本月佔比", "次月加總", "次月佔比",
+            "本月家電加總", "次月家電加總", "儲值金"
+        ])
+        empty_daily = pd.DataFrame(columns=[
+            "日期",
+            "台北業績", "台北佔比",
+            "台中業績", "台中佔比",
+            "桃園業績", "桃園佔比",
+            "新竹業績", "新竹佔比",
+            "高雄業績", "高雄佔比",
+            "全區合計",
+        ])
+
+        if persist_dashboard:
+            persist_dashboard_payload(empty_df4, empty_daily, "", error_msg)
+
+        return {
+            "raw_df": pd.DataFrame(),
+            "df1": pd.DataFrame(),
+            "df2": pd.DataFrame(),
+            "df3": pd.DataFrame(),
+            "df4": empty_df4,
+            "daily_df": empty_daily,
+            "email_html": "",
+            "updated_at": now_dt().strftime("%Y-%m-%d %H:%M:%S"),
+            "execution_log_df": load_execution_log_for_current_month(),
+            "daily_history_df": load_daily_history_for_current_month(),
+            "error": error_msg,
+        }
+
+    df1 = build_region1_df(raw_df)
+    df2 = build_region2_df(raw_df)
+    df3 = build_region3_df(df2)
+    df4 = build_region4_df(df2)
+
+    daily_df = build_daily_overview_df(df4)
+
+    log(f"raw_df columns = {list(raw_df.columns)}")
+    log(f"raw_df 前5筆 = {raw_df.head().to_dict('records')}")
+    log(f"df1 rows = {len(df1)}")
+    log(f"df2 rows = {len(df2)}")
+    log(f"df3 rows = {len(df3)}")
+    log(f"df4 rows = {len(df4)}")
+    log(f"daily_df rows = {len(daily_df)}")
+
+    email_html = build_region4_email_html(df4)
+
+    append_execution_log(df4, trigger=trigger)
+    append_daily_overview_history(daily_df, trigger=trigger)
+
+    error_msg = None if not city_errors else " / ".join(city_errors)
+
+    if persist_dashboard:
+        persist_dashboard_payload(df4, daily_df, email_html, error_msg)
+
+    if send_email:
+        send_region4_email(df4)
+
+    return {
+        "raw_df": raw_df,
+        "df1": df1,
+        "df2": df2,
+        "df3": df3,
+        "df4": format_region4_for_display(df4),
+        "daily_df": daily_df,
+        "email_html": email_html,
+        "updated_at": now_dt().strftime("%Y-%m-%d %H:%M:%S"),
+        "execution_log_df": load_execution_log_for_current_month(),
+        "daily_history_df": load_daily_history_for_current_month(),
+        "error": error_msg,
+    }
 
 
 def main():
