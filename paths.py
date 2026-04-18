@@ -1,30 +1,34 @@
 from pathlib import Path
-import os
 
-# 是否在 GitHub Actions 執行
-IS_GITHUB = os.getenv("GITHUB_ACTIONS") == "true"
+# =========================================================
+# 環境判斷
+# =========================================================
+HOME = Path.home()
 
-if IS_GITHUB:
-    # GitHub runner 用的暫存輸出根目錄
-    BASE_OUTPUT = Path(os.getenv("OUTPUT_BASE", "/home/runner/work/lemon_outputs"))
-    BASE_OUTPUT.mkdir(parents=True, exist_ok=True)
+LOCAL_GOOGLE_DRIVE = Path(
+    "/Users/jenny/Library/CloudStorage/GoogleDrive-jenny@lemonclean.com.tw/我的雲端硬碟"
+)
 
-    PATH_JENNY = BASE_OUTPUT / "Jenny"
-    PATH_SCHEDULE = BASE_OUTPUT / "排班統計表"
-    PATH_CLEANER_SCHEDULE = BASE_OUTPUT / "專員班表"
-    PATH_CLEANER_DATA = BASE_OUTPUT / "專員系統個資"
-    PATH_ORDER = BASE_OUTPUT / "訂單資料"
-    PATH_VIP = BASE_OUTPUT / "VIP儲值金"
-    PATH_HR = BASE_OUTPUT / "服務分潤表"
+LOCAL_SCHEDULE_SHORTCUT = Path(
+    "/Users/jenny/Library/CloudStorage/GoogleDrive-jenny@lemonclean.com.tw/.shortcut-targets-by-id/1zbu45AG1adMzz24HPdi_tLfh2Tncw_Br/排班統計表"
+)
 
-else:
-    BASE_GOOGLE_DRIVE = Path("/Users/jenny/Library/CloudStorage/GoogleDrive-jenny@lemonclean.com.tw/我的雲端硬碟")
+IS_LOCAL_MAC = str(HOME).startswith("/Users/") and LOCAL_GOOGLE_DRIVE.exists()
+
+# 雲端可寫暫存根目錄
+CLOUD_BASE = Path("/tmp/lemon_data")
+
+# =========================================================
+# 路徑設定
+# =========================================================
+if IS_LOCAL_MAC:
+    BASE_GOOGLE_DRIVE = LOCAL_GOOGLE_DRIVE
 
     # Jenny 個人輸出
     PATH_JENNY = BASE_GOOGLE_DRIVE / "lemon_Jenny" / "Jenny@lemon程式"
 
     # 排班統計表
-    PATH_SCHEDULE = Path("/Users/jenny/Library/CloudStorage/GoogleDrive-jenny@lemonclean.com.tw/.shortcut-targets-by-id/1zbu45AG1adMzz24HPdi_tLfh2Tncw_Br/排班統計表")
+    PATH_SCHEDULE = LOCAL_SCHEDULE_SHORTCUT
 
     # 其他輸出資料夾
     PATH_CLEANER_SCHEDULE = PATH_JENNY / "專員班表"
@@ -37,8 +41,22 @@ else:
     # 人事
     PATH_HR = BASE_GOOGLE_DRIVE / "lemon_人事" / "03 服務分潤表"
 
-# 自動建立資料夾
-for p in [
+else:
+    # 雲端 / Streamlit Cloud
+    BASE_GOOGLE_DRIVE = CLOUD_BASE / "google_drive_mock"
+
+    PATH_JENNY = CLOUD_BASE / "Jenny"
+    PATH_SCHEDULE = CLOUD_BASE / "排班統計表"
+    PATH_CLEANER_SCHEDULE = CLOUD_BASE / "專員班表"
+    PATH_CLEANER_DATA = CLOUD_BASE / "專員系統個資"
+    PATH_ORDER = CLOUD_BASE / "訂單資料"
+    PATH_VIP = CLOUD_BASE / "VIP儲值金"
+    PATH_HR = CLOUD_BASE / "服務分潤表"
+
+# =========================================================
+# 建立目前環境可用資料夾
+# =========================================================
+PATHS_TO_CREATE = [
     PATH_JENNY,
     PATH_SCHEDULE,
     PATH_CLEANER_SCHEDULE,
@@ -46,8 +64,15 @@ for p in [
     PATH_ORDER,
     PATH_VIP,
     PATH_HR,
-]:
-    p.mkdir(parents=True, exist_ok=True)
+]
 
+for p in PATHS_TO_CREATE:
+    try:
+        p.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        pass
+
+# =========================================================
 # 共用設定
+# =========================================================
 API_LIMIT = 10000
