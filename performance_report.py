@@ -58,6 +58,19 @@ def log(msg: str):
     print(f"[{now_dt().strftime('%Y-%m-%d %H:%M:%S')}] {msg}")
 
 
+def get_enabled_cities():
+    enabled = [city for city in CITY_ORDER if city in ACCOUNTS]
+    missing = [city for city in CITY_ORDER if city not in ACCOUNTS]
+
+    if missing:
+        log(f"⚠️ ACCOUNTS 缺少城市設定，已略過：{', '.join(missing)}")
+
+    if not enabled:
+        raise RuntimeError("ACCOUNTS 沒有任何可用城市設定")
+
+    return enabled
+
+
 def login(session, email, password):
     res = session.get(LOGIN_URL, headers=HEADERS, allow_redirects=True)
     res.raise_for_status()
@@ -777,7 +790,9 @@ def generate_sales_report(send_email=False, persist_dashboard=True, trigger="das
     (m_start, m_end), (n_start, n_end) = get_ranges()
     merged = {}
 
-    for city in CITY_ORDER:
+    enabled_cities = get_enabled_cities()
+
+    for city in enabled_cities:
         log(f"===== {city} =====")
 
         session = requests.Session()
