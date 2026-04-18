@@ -3,16 +3,28 @@ name: Daily Performance Report
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 0 * * *'   # 台北時間每天 08:00（GitHub Actions 用 UTC）
+    - cron: '0 0 * * *'  # 台北時間每天 08:00（UTC 00:00）
 
 jobs:
   run-performance-report:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      TZ: Asia/Taipei
+      TAIPEI_EMAIL: ${{ secrets.TAIPEI_EMAIL }}
+      TAIPEI_PASSWORD: ${{ secrets.TAIPEI_PASSWORD }}
+      TAICHUNG_EMAIL: ${{ secrets.TAICHUNG_EMAIL }}
+      TAICHUNG_PASSWORD: ${{ secrets.TAICHUNG_PASSWORD }}
+      TAOYUAN_EMAIL: ${{ secrets.TAOYUAN_EMAIL }}
+      TAOYUAN_PASSWORD: ${{ secrets.TAOYUAN_PASSWORD }}
+      HSINCHU_EMAIL: ${{ secrets.HSINCHU_EMAIL }}
+      HSINCHU_PASSWORD: ${{ secrets.HSINCHU_PASSWORD }}
+      KAOHSIUNG_EMAIL: ${{ secrets.KAOHSIUNG_EMAIL }}
+      KAOHSIUNG_PASSWORD: ${{ secrets.KAOHSIUNG_PASSWORD }}
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -22,54 +34,27 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install pandas requests beautifulsoup4 lxml
+          pip install pandas requests beautifulsoup4 lxml streamlit
 
-      - name: Create runtime folders
+      - name: Ensure output folders exist
         run: |
-          mkdir -p ./report_output
-          mkdir -p ./report_output/_dashboard_sales/latest
-          mkdir -p ./report_output/_dashboard_sales/snapshots
-          mkdir -p ./report_output/_dashboard_sales/execution_logs
-          mkdir -p ./report_output/_dashboard_sales/daily_overview_history
-
-      - name: Write accounts.py from GitHub Secret
-        env:
-          ACCOUNTS_PY: ${{ secrets.ACCOUNTS_PY }}
-        run: |
-          cat > accounts.py <<'PY'
-          ${{ secrets.ACCOUNTS_PY }}
-          PY
-
-      - name: Write paths.py for GitHub Actions
-        run: |
-          cat > paths.py <<'PY'
+          python - <<'PY'
           import os
-          BASE_DIR = os.path.dirname(__file__)
-          OUTPUT_BASE = os.path.join(BASE_DIR, "report_output")
-
-          PATH_SCHEDULE = os.path.join(OUTPUT_BASE, "schedule")
-          PATH_CLEANER_SCHEDULE = os.path.join(OUTPUT_BASE, "cleaner_schedule")
-          PATH_CLEANER_DATA = os.path.join(OUTPUT_BASE, "cleaner_data")
-          PATH_ORDER = os.path.join(OUTPUT_BASE, "orders")
-          PATH_REPORT = os.path.join(OUTPUT_BASE, "reports")
-          PATH_VIP = os.path.join(OUTPUT_BASE, "vip")
-          PATH_HR = os.path.join(OUTPUT_BASE, "hr")
-
-          for p in [
-              PATH_SCHEDULE,
-              PATH_CLEANER_SCHEDULE,
-              PATH_CLEANER_DATA,
-              PATH_ORDER,
-              PATH_REPORT,
-              PATH_VIP,
-              PATH_HR,
-          ]:
-              os.makedirs(p, exist_ok=True)
+          try:
+              from paths import (
+                  PATH_SCHEDULE, PATH_CLEANER_SCHEDULE, PATH_CLEANER_DATA,
+                  PATH_ORDER, PATH_REPORT, PATH_VIP, PATH_HR
+              )
+              for p in [
+                  PATH_SCHEDULE, PATH_CLEANER_SCHEDULE, PATH_CLEANER_DATA,
+                  PATH_ORDER, PATH_REPORT, PATH_VIP, PATH_HR
+              ]:
+                  os.makedirs(p, exist_ok=True)
+          except Exception as e:
+              print(f"skip ensure paths: {e}")
           PY
 
       - name: Run performance report
-        env:
-          TZ: Asia/Taipei
         run: |
           python performance_report.py schedule true
 
@@ -78,5 +63,6 @@ jobs:
         with:
           name: performance-report-output
           path: |
-            report_output/
+            .
           if-no-files-found: warn
+          compression-level: 6
