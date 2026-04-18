@@ -239,69 +239,76 @@ def normalize_date_text(text: str) -> Optional[str]:
     return None
 
 
-def parse_html(html):
+def parse_html(html: str) -> pd.DataFrame:
     soup = BeautifulSoup(html, "html.parser")
-    tables = soup.find_all("table")
-    results = []
+    table = soup.find("table")
 
-    date_candidates = ["服務日期", "清潔日期", "日期", "預約日期", "服務日", "clean_date"]
+    if table is None:
+        log("❌ parse_html：找不到 table")
+        return pd.DataFrame()
 
-    for table in tables:
-        trs = table.find_all("tr")
-        rows = []
+    rows = table.find_all("tr")
+    data = []
 
-        for tr in trs:
-            cells = tr.find_all(["th", "td"])
-            row = [c.get_text(" ", strip=True) for c in cells]
-            if any(str(x).strip() for x in row):
-                rows.append(row)
+    current_city = None
 
-        if not rows:
+    for tr in rows:
+        cols = [td.get_text(strip=True) for td in tr.find_all(["td", "th"])]
+
+        if not cols:
             continue
 
-        header = [str(x).strip() for x in rows[0]]
-
-        if "已付款金額" not in header and "待付款金額" not in header:
+        # 👉 偵測城市（例如：台北、台中）
+        if cols[0] in CITY_ORDER:
+            current_city = cols[0]
             continue
 
-        paid_idx = header.index("已付款金額") if "已付款金額" in header else None
-        unpaid_idx = header.index("待付款金額") if "待付款金額" in header else None
+        # 👉 日期列（關鍵！！！）
+        # 通常長這樣：2026-04-01 或 4/1
+        raw_date = cols[0]
 
-        date_idx = None
-        for name in date_candidates:
-            if name in header:
-                date_idx = header.index(name)
-                break
+        parsed_date = None
 
-        income_type = detect_income_type(header[0] if header else "")
-        source = "儲值金表" if income_type == "儲值金" else "主表"
+        try:
+            # yyyy-mm-dd
+            if "-" in raw_date:
+                parsed_date = datetime.strptime(raw_date, "%Y-%m-%d")
 
-        for row in rows[1:]:
-            if not row:
-                continue
+            # m/d
+            elif "/" in raw_date:
+                today = datetime.today()
+                parsed_date = datetime.strptime(
+                    f"{today.year}/{raw_date}", "%Y/%m/%d"
+                )
 
-            service = normalize_service(row[0] if len(row) > 0 else "")
-            if not service or service == "加總" or service.startswith("LC"):
-                continue
+        except Exception:
+            pass
 
-            paid = safe_int(row[paid_idx]) if paid_idx is not None and len(row) > paid_idx else 0
-            unpaid = safe_int(row[unpaid_idx]) if unpaid_idx is not None and len(row) > unpaid_idx else 0
+        if parsed_date is None:
+            continue
 
-            service_date = None
-            if date_idx is not None and len(row) > date_idx:
-                service_date = normalize_date_text(row[date_idx])
+        # 👉 金額欄（依你後台格式）
+        try:
+            paid = int(cols[1].replace(",", "")) if len(cols) > 1 else 0
+            unpaid = int(cols[2].replace(",", "")) if len(cols) > 2 else 0
+        except Exception:
+            paid = 0
+            unpaid = 0
 
-            results.append({
-                "收入類型": income_type,
-                "資料來源": source,
-                "服務": service,
-                "子項目": "",
-                "日期": service_date,
-                "已付款": paid,
-                "待付款": unpaid,
-            })
+        data.append({
+            "城市": current_city,
+            "日期": parsed_date,
+            "月份": "本月",
+            "已付款": paid,
+            "待付款": unpaid,
+        })
 
-    return results
+    df = pd.DataFrame(data)
+
+    log(f"✅ parse_html rows = {len(df)}")
+    log(f"columns = {list(df.columns)}")
+
+    return df
 
 
 def to_category(service, income) -> Optional[str]:
