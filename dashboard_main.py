@@ -31,7 +31,16 @@ from performance_report import (
 
 TZ_TAIPEI = timezone(timedelta(hours=8))
 
-BASE_DIR = Path("/Users/jenny/lemon")
+PROJECT_DIR = Path(__file__).resolve().parent
+LOCAL_BASE_DIR = Path("/Users/jenny/lemon")
+
+if LOCAL_BASE_DIR.exists():
+    BASE_DIR = LOCAL_BASE_DIR
+    IS_LOCAL_RUNTIME = True
+else:
+    BASE_DIR = PROJECT_DIR
+    IS_LOCAL_RUNTIME = False
+
 LOG_FILE = BASE_DIR / "cron.log"
 LAUNCH_AGENTS_DIR = Path.home() / "Library/LaunchAgents"
 CONFIG_FILE = BASE_DIR / "dashboard_config.json"
