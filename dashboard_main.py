@@ -1,9 +1,6 @@
 import json
 import plistlib
 import subprocess
-import tempfile
-import py_compile
-import shutil
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional, Dict, Callable, List
@@ -15,7 +12,6 @@ from paths import (
     PATH_CLEANER_DATA,
     PATH_CLEANER_SCHEDULE,
     PATH_HR,
-    PATH_JENNY,
     PATH_ORDER,
     PATH_REPORT,
     PATH_SCHEDULE,
@@ -75,18 +71,6 @@ CATEGORY_MATCHERS: Dict[str, Callable[[Path], bool]] = {
     "上下半月訂單": lambda p: "訂單-" in p.name and "已退款" not in p.name,
     "已退款": lambda p: "已退款" in p.name,
 }
-
-NAV_PAGES = [
-    "主控表",
-    "業績報表",
-    "上下半月訂單",
-    "手動執行",
-    "Log 監控",
-    "輸出檔案",
-    "程式管理",
-    "排程設定",
-]
-NAV_ICONS = ["📋", "💹", "🧾", "▶️", "📄", "📂", "⚙️", "⏰"]
 
 MAIN_REPORT_TASKS = [
     {
@@ -194,15 +178,6 @@ def file_mtime(path: Optional[Path]) -> str:
         return "-"
     ts = datetime.fromtimestamp(path.stat().st_mtime, tz=TZ_TAIPEI)
     return ts.strftime("%m/%d %H:%M")
-
-
-def file_mtime_dt(path: Optional[Path]):
-    if not path or not path.exists():
-        return None
-    try:
-        return datetime.fromtimestamp(path.stat().st_mtime, tz=TZ_TAIPEI)
-    except Exception:
-        return None
 
 
 def file_size_str(path: Optional[Path]) -> str:
@@ -349,16 +324,6 @@ def find_latest_files(base_dir: Path, limit: int = 10, category: Optional[str] =
     return files[:limit]
 
 
-def open_in_finder(path: Path):
-    try:
-        if path.is_file():
-            subprocess.Popen(["open", "-R", str(path)])
-        else:
-            subprocess.Popen(["open", str(path)])
-    except Exception as e:
-        st.error(f"無法開啟 Finder：{e}")
-
-
 def load_sales_latest_payload():
     latest_dir = Path(LATEST_DIR)
     df4_path = latest_dir / "df4.csv"
@@ -391,57 +356,6 @@ def sales_fmt_int(x):
         return f"{int(float(x)):,}"
     except Exception:
         return "0"
-
-
-def sales_fmt_pct(x):
-    try:
-        return f"{float(x):.2%}"
-    except Exception:
-        return "0.00%"
-
-
-def style_sales_df4(df):
-    if df.empty:
-        return df
-    out = df.copy()
-    for col in ["本月加總", "次月加總", "本月家電加總", "次月家電加總", "儲值金"]:
-        if col in out.columns:
-            out[col] = out[col].apply(sales_fmt_int)
-    for col in ["本月佔比", "次月佔比"]:
-        if col in out.columns:
-            out[col] = out[col].apply(sales_fmt_pct)
-    return out
-
-
-def style_sales_daily(df):
-    if df.empty:
-        return df
-    out = df.copy()
-    for col in out.columns:
-        if col.endswith("業績") or col == "全區合計":
-            out[col] = out[col].apply(sales_fmt_int)
-        elif col.endswith("佔比"):
-            out[col] = out[col].apply(sales_fmt_pct)
-    return out
-
-
-def style_sales_exec(df):
-    if df.empty:
-        return df
-    out = df.copy()
-    for col in ["本月加總", "次月加總", "本月家電加總", "次月家電加總", "儲值金"]:
-        if col in out.columns:
-            out[col] = out[col].apply(sales_fmt_int)
-    return out
-
-
-def style_sales_history(df):
-    if df.empty:
-        return df
-    out = df.copy()
-    if "今日全區合計" in out.columns:
-        out["今日全區合計"] = out["今日全區合計"].apply(sales_fmt_int)
-    return out
 
 
 def get_sales_total_row(df4):
@@ -490,35 +404,10 @@ def inject_styles():
         font-size: 14px;
         font-weight: 800;
     }
-    .status-green {
-        background: #dcfce7;
-        color: #166534;
-    }
-    .status-yellow {
-        background: #fef3c7;
-        color: #92400e;
-    }
-    .status-red {
-        background: #fee2e2;
-        color: #991b1b;
-    }
-    .status-gray {
-        background: #e5e7eb;
-        color: #475569;
-    }
-    .result-ok {
-        color: #15803d;
-        font-weight: 800;
-    }
-    .result-fail {
-        color: #b91c1c;
-        font-weight: 800;
-    }
-    .script-note {
-        color: #6b7280;
-        font-size: 14px;
-        margin-top: 6px;
-    }
+    .status-green { background: #dcfce7; color: #166534; }
+    .status-yellow { background: #fef3c7; color: #92400e; }
+    .status-red { background: #fee2e2; color: #991b1b; }
+    .status-gray { background: #e5e7eb; color: #475569; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -533,8 +422,7 @@ def render_main_page():
     if "task_results" not in st.session_state:
         st.session_state.task_results = {}
 
-    st.markdown('<div class="section-card">', unsafe_allow_html=True)
-    st.markdown('<div class="section-title">報表任務</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-card"><div class="section-title">報表任務</div>', unsafe_allow_html=True)
 
     header = st.columns([2.0, 1.1, 1.8, 1.2, 1.1, 1.3, 0.8])
     header[0].markdown("**檔案名稱**")
@@ -546,11 +434,7 @@ def render_main_page():
     header[6].markdown("**執行**")
 
     for task in MAIN_REPORT_TASKS:
-        sched = load_plist_schedule(
-            task["plist"],
-            default_hour=task["default_hour"],
-            default_minute=task["default_minute"],
-        )
+        sched = load_plist_schedule(task["plist"], task["default_hour"], task["default_minute"])
         status_text, status_cls = render_launchd_status(task["label"], status_map)
         result_data = st.session_state.task_results.get(task["task_key"])
 
@@ -561,31 +445,16 @@ def render_main_page():
             st.caption(task["script"])
 
         with row[1]:
-            if sched["hour"] and sched["minute"]:
-                st.write(f'{sched["hour"]}:{sched["minute"]}')
-            else:
-                st.write("—")
+            st.write(f'{sched["hour"]}:{sched["minute"]}' if sched["hour"] and sched["minute"] else "—")
             if sched.get("source") == "default":
                 st.caption("預設值")
 
         with row[2]:
             c1, c2, c3 = st.columns([1, 1, 0.8])
             with c1:
-                hour_val = st.text_input(
-                    "時",
-                    value=sched["hour"],
-                    key=f'hour_{task["task_key"]}',
-                    label_visibility="collapsed",
-                    placeholder="時",
-                )
+                hour_val = st.text_input("時", value=sched["hour"], key=f'hour_{task["task_key"]}', label_visibility="collapsed")
             with c2:
-                minute_val = st.text_input(
-                    "分",
-                    value=sched["minute"],
-                    key=f'minute_{task["task_key"]}',
-                    label_visibility="collapsed",
-                    placeholder="分",
-                )
+                minute_val = st.text_input("分", value=sched["minute"], key=f'minute_{task["task_key"]}', label_visibility="collapsed")
             with c3:
                 if st.button("💾", key=f'save_{task["task_key"]}', use_container_width=True):
                     if not task["plist"].exists():
@@ -593,12 +462,7 @@ def render_main_page():
                     elif not hour_val.isdigit() or not minute_val.isdigit():
                         st.error("時間必須是數字")
                     else:
-                        code, out, err = save_plist_schedule(
-                            task["plist"],
-                            hour=hour_val,
-                            minute=minute_val,
-                            day=sched["day"],
-                        )
+                        code, out, err = save_plist_schedule(task["plist"], hour=hour_val, minute=minute_val, day=sched["day"])
                         if code == 0:
                             st.success(f'{task["name"]} 排程已更新')
                             st.rerun()
@@ -606,10 +470,7 @@ def render_main_page():
                             st.error(err or out or "更新失敗")
 
         with row[3]:
-            st.markdown(
-                f'<span class="status-pill status-{status_cls}">{status_text}</span>',
-                unsafe_allow_html=True,
-            )
+            st.markdown(f'<span class="status-pill status-{status_cls}">{status_text}</span>', unsafe_allow_html=True)
 
         with row[4]:
             if result_data is None:
@@ -626,7 +487,6 @@ def render_main_page():
             if st.button("▶", key=f'run_{task["task_key"]}', use_container_width=True):
                 with st.spinner(f'執行中：{task["name"]}'):
                     code, out, err = run_shell(task["cmd"])
-
                 st.session_state.task_results[task["task_key"]] = {
                     "name": task["name"],
                     "code": code,
@@ -641,7 +501,6 @@ def render_main_page():
             st.markdown(f"**{task['name']} 執行結果**")
             st.write(f'執行時間：{result_data["ran_at"]}')
             st.write(f'回傳碼：{result_data["code"]}')
-
             if result_data["code"] == 0:
                 st.success("執行成功")
             else:
@@ -651,16 +510,8 @@ def render_main_page():
                 st.code(fail_reason)
 
             with st.expander("查看完整 stdout / stderr"):
-                st.text_area(
-                    f'stdout_{task["task_key"]}',
-                    result_data["stdout"] or "(無輸出)",
-                    height=140,
-                )
-                st.text_area(
-                    f'stderr_{task["task_key"]}',
-                    result_data["stderr"] or "(無錯誤)",
-                    height=140,
-                )
+                st.text_area(f'stdout_{task["task_key"]}', result_data["stdout"] or "(無輸出)", height=140)
+                st.text_area(f'stderr_{task["task_key"]}', result_data["stderr"] or "(無錯誤)", height=140)
 
         st.divider()
 
@@ -698,7 +549,6 @@ def render_sales_page():
         if st.button("📂 重新讀取已存資料", key="sales_reload", use_container_width=True):
             st.rerun()
 
-    # 優先使用剛更新的結果；沒有就讀 latest
     if result is not None:
         df4 = result.get("df4", pd.DataFrame())
         daily_df = result.get("daily_df", pd.DataFrame())
@@ -723,7 +573,6 @@ def render_sales_page():
 
     st.info(f"最新更新時間：{updated_at}")
 
-    # KPI
     total = get_sales_total_row(df4)
     k1, k2, k3, k4 = st.columns(4)
 
@@ -738,7 +587,6 @@ def render_sales_page():
         k3.metric("本月家電加總", sales_fmt_int(total.get("本月家電加總", 0)))
         k4.metric("儲值金", sales_fmt_int(total.get("儲值金", 0)))
 
-    # 各區月度摘要
     st.markdown('<div class="section-card"><div class="section-title">各區月度摘要</div>', unsafe_allow_html=True)
     if df4.empty:
         st.warning("目前沒有資料")
@@ -756,67 +604,51 @@ def render_sales_page():
             })
             .set_properties(subset=["城市"], **{"text-align": "left"})
             .set_properties(
-                subset=[
-                    "本月加總", "本月佔比", "次月加總", "次月佔比",
-                    "本月家電加總", "次月家電加總", "儲值金"
-                ],
+                subset=["本月加總", "本月佔比", "次月加總", "次月佔比", "本月家電加總", "次月家電加總", "儲值金"],
                 **{"text-align": "right"}
             )
         )
         st.dataframe(summary_style, use_container_width=True, hide_index=True)
     st.markdown('</div>', unsafe_allow_html=True)
 
-    # 當月每日業績總覽（by 地區）
-st.markdown(
-    '<div class="section-card"><div class="section-title">當月每日業績總覽</div>',
-    unsafe_allow_html=True
-)
+    st.markdown('<div class="section-card"><div class="section-title">當月每日業績總覽</div>', unsafe_allow_html=True)
+    if daily_df.empty:
+        st.warning("目前沒有資料")
+    else:
+        cols = [
+            "日期",
+            "台北業績", "台北佔比",
+            "台中業績", "台中佔比",
+            "桃園業績", "桃園佔比",
+            "新竹業績", "新竹佔比",
+            "高雄業績", "高雄佔比",
+            "全區合計",
+        ]
+        exist_cols = [c for c in cols if c in daily_df.columns]
+        df_show = daily_df[exist_cols].copy()
 
-if daily_df.empty:
-    st.warning("目前沒有資料")
-else:
-    # 欄位順序固定（照你畫面）
-    cols = [
-        "日期",
-        "台北業績", "台北佔比",
-        "台中業績", "台中佔比",
-        "桃園業績", "桃園佔比",
-        "新竹業績", "新竹佔比",
-        "高雄業績", "高雄佔比",
-        "全區合計"
-    ]
-
-    # 避免缺欄位報錯
-    exist_cols = [c for c in cols if c in daily_df.columns]
-    df_show = daily_df[exist_cols].copy()
-
-    styled = (
-        df_show.style
-        .format({
-            "台北業績": "{:,.0f}",
-            "台中業績": "{:,.0f}",
-            "桃園業績": "{:,.0f}",
-            "新竹業績": "{:,.0f}",
-            "高雄業績": "{:,.0f}",
-            "全區合計": "{:,.0f}",
-            "台北佔比": "{:.2%}",
-            "台中佔比": "{:.2%}",
-            "桃園佔比": "{:.2%}",
-            "新竹佔比": "{:.2%}",
-            "高雄佔比": "{:.2%}",
-        })
-        .set_properties(subset=["日期"], **{"text-align": "left"})
-        .set_properties(
-            subset=[c for c in exist_cols if c != "日期"],
-            **{"text-align": "right"}
+        daily_style = (
+            df_show.style
+            .format({
+                "台北業績": "{:,.0f}",
+                "台中業績": "{:,.0f}",
+                "桃園業績": "{:,.0f}",
+                "新竹業績": "{:,.0f}",
+                "高雄業績": "{:,.0f}",
+                "全區合計": "{:,.0f}",
+                "台北佔比": "{:.2%}",
+                "台中佔比": "{:.2%}",
+                "桃園佔比": "{:.2%}",
+                "新竹佔比": "{:.2%}",
+                "高雄佔比": "{:.2%}",
+            })
+            .set_properties(subset=["日期"], **{"text-align": "left"})
+            .set_properties(subset=[c for c in exist_cols if c != "日期"], **{"text-align": "right"})
         )
-    )
 
-    st.dataframe(styled, use_container_width=True, hide_index=True)
+        st.dataframe(daily_style, use_container_width=True, hide_index=True)
+    st.markdown('</div>', unsafe_allow_html=True)
 
-st.markdown('</div>', unsafe_allow_html=True)
-
-    # 當月累積執行紀錄
     st.markdown('<div class="section-card"><div class="section-title">當月累積執行紀錄</div>', unsafe_allow_html=True)
     if execution_log_df.empty:
         st.warning("目前沒有執行紀錄")
@@ -831,15 +663,11 @@ st.markdown('</div>', unsafe_allow_html=True)
                 "儲值金": "{:,.0f}",
             })
             .set_properties(subset=["id", "執行時間", "來源"], **{"text-align": "left"})
-            .set_properties(
-                subset=["本月加總", "次月加總", "本月家電加總", "次月家電加總", "儲值金"],
-                **{"text-align": "right"}
-            )
+            .set_properties(subset=["本月加總", "次月加總", "本月家電加總", "次月家電加總", "儲值金"], **{"text-align": "right"})
         )
         st.dataframe(exec_style, use_container_width=True, hide_index=True)
     st.markdown('</div>', unsafe_allow_html=True)
 
-    # 當月每日業績總覽留存紀錄
     st.markdown('<div class="section-card"><div class="section-title">當月每日業績總覽留存紀錄</div>', unsafe_allow_html=True)
     if daily_history_df.empty:
         st.warning("目前沒有留存紀錄")
@@ -861,20 +689,13 @@ st.markdown('</div>', unsafe_allow_html=True)
             history_style = (
                 history_style
                 .format({"今日全區合計": "{:,.0f}"})
-                .set_properties(
-                    subset=[c for c in ["id", "執行時間", "來源", "日期", "daily_rows"] if c in display_history.columns],
-                    **{"text-align": "left"}
-                )
-                .set_properties(
-                    subset=[c for c in ["今日全區合計"] if c in display_history.columns],
-                    **{"text-align": "right"}
-                )
+                .set_properties(subset=[c for c in ["id", "執行時間", "來源", "日期", "daily_rows"] if c in display_history.columns], **{"text-align": "left"})
+                .set_properties(subset=[c for c in ["今日全區合計"] if c in display_history.columns], **{"text-align": "right"})
             )
 
         st.dataframe(history_style, use_container_width=True, hide_index=True)
     st.markdown('</div>', unsafe_allow_html=True)
 
-    # 信件預覽
     st.markdown('<div class="section-card"><div class="section-title">信件預覽</div>', unsafe_allow_html=True)
     if email_html:
         st.components.v1.html(email_html, height=520, scrolling=True)
