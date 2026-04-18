@@ -1,14 +1,15 @@
-name: Daily Performance Report
+name: Nightly Reports
 
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 0 * * *'  # 台北時間每天 08:00（UTC 00:00）
+    - cron: '10 17 * * *'  # 台北 01:10
 
 jobs:
-  run-performance-report:
+  run-nightly:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
+
     env:
       TZ: Asia/Taipei
       TAIPEI_EMAIL: ${{ secrets.TAIPEI_EMAIL }}
@@ -35,7 +36,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install pandas requests beautifulsoup4 lxml streamlit
+          pip install pandas requests beautifulsoup4 lxml streamlit google-auth google-auth-oauthlib google-api-python-client
 
       - name: Debug account env
         run: |
@@ -50,6 +51,7 @@ jobs:
           ]
           for k in keys:
               print(k, "OK" if os.getenv(k) else "MISSING")
+          print("GOOGLE_SERVICE_ACCOUNT", "OK" if os.getenv("GOOGLE_SERVICE_ACCOUNT") else "MISSING")
           PY
 
       - name: Ensure output folders exist
@@ -70,15 +72,25 @@ jobs:
               print(f"skip ensure paths: {e}")
           PY
 
-      - name: Run performance report
+      - name: Run schedule report
         run: |
-          python performance_report.py schedule true
+          python schedule_report.py
+
+      - name: Run staff schedule
+        run: |
+          python staff_schedule.py
+
+      - name: Run staff info
+        run: |
+          python staff_info.py
+
+      - name: Run orders report
+        run: |
+          python orders_report.py
 
       - name: Upload generated files
         uses: actions/upload-artifact@v6
         with:
-          name: performance-report-output
-          path: |
-            .
+          name: nightly-reports-output
+          path: .
           if-no-files-found: warn
-          compression-level: 6
