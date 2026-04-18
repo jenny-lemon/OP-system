@@ -455,7 +455,10 @@ def render_sales_page():
     else:
         int4 = {"本月加總", "次月加總", "本月家電加總", "次月家電加總", "儲值金"}
         pct4 = {"本月佔比", "次月佔比"}
-        st.markdown(render_html_table(df4, right_cols=int4 | pct4, pct_cols=pct4, int_cols=int4), unsafe_allow_html=True)
+        st.markdown(
+            render_html_table(df4, right_cols=int4 | pct4, pct_cols=pct4, int_cols=int4),
+            unsafe_allow_html=True
+        )
     st.markdown("</div>", unsafe_allow_html=True)
 
     st.markdown('<div class="section-card">', unsafe_allow_html=True)
@@ -474,10 +477,30 @@ def render_sales_page():
         reason = "daily_df.csv 不存在，請先按「更新資料」。" if not daily_csv.exists() else "CSV 存在但無資料列。"
         st.markdown(f'<div class="empty-state"><span class="icon">📭</span>{reason}</div>', unsafe_allow_html=True)
     else:
-        if "id" in daily_df.columns:
+        daily_view_df = daily_df.copy()
+
+        if "日期" in daily_view_df.columns:
+            dt_series = pd.to_datetime(daily_view_df["日期"], errors="coerce")
+
+            if getattr(dt_series.dt, "tz", None) is None:
+                dt_series = dt_series.dt.tz_localize("Asia/Taipei")
+            else:
+                dt_series = dt_series.dt.tz_convert("Asia/Taipei")
+
+            daily_view_df["_sort_dt"] = dt_series
+            daily_view_df["日期"] = dt_series.dt.strftime("%Y/%m/%d %H:%M")
+            daily_view_df = daily_view_df.sort_values(
+                by="_sort_dt",
+                ascending=False,
+                na_position="last"
+            )
+        else:
+            daily_view_df["_sort_dt"] = pd.NaT
+
+        if "id" in daily_view_df.columns:
             del_ids = st.multiselect(
                 "勾選要刪除的每日業績總覽紀錄",
-                options=daily_df["id"].astype(str).tolist(),
+                options=daily_view_df["id"].astype(str).tolist(),
                 key="del_daily_df_ids"
             )
 
@@ -496,39 +519,45 @@ def render_sales_page():
             "高雄業績", "高雄佔比",
             "全區合計"
         ]
-        show_cols = [c for c in show_cols if c in daily_df.columns]
+        show_cols = [c for c in show_cols if c in daily_view_df.columns]
 
         int_d = {c for c in show_cols if "業績" in c or c == "全區合計"}
         pct_d = {c for c in show_cols if "佔比" in c}
 
         PAGE_SIZE = 30
-        total_rows = len(daily_df)
+        total_rows = len(daily_view_df)
         total_pages = max(1, (total_rows - 1) // PAGE_SIZE + 1)
+
+        current_page = st.session_state.get("daily_df_page", 1)
+        current_page = min(max(1, current_page), total_pages)
+        st.session_state["daily_df_page"] = current_page
 
         page = st.number_input(
             "頁數",
             min_value=1,
             max_value=total_pages,
-            value=min(st.session_state.get("daily_df_page", 1), total_pages),
+            value=current_page,
             step=1,
             key="daily_df_page"
         )
 
         start_idx = (page - 1) * PAGE_SIZE
         end_idx = start_idx + PAGE_SIZE
-        page_df = daily_df.iloc[start_idx:end_idx].copy()
+        page_df = daily_view_df.iloc[start_idx:end_idx].copy()
 
         st.caption(f"第 {page} / {total_pages} 頁（每頁 {PAGE_SIZE} 筆，共 {total_rows} 筆）")
 
         st.markdown(
             render_html_table(
-                page_df[show_cols],
+                page_df[show_cols].copy(),
                 right_cols=int_d | pct_d,
                 pct_cols=pct_d,
                 int_cols=int_d
             ),
             unsafe_allow_html=True
         )
+
+    st.markdown("</div>", unsafe_allow_html=True)
 
     if email_html:
         with st.expander("📧 信件預覽"):
