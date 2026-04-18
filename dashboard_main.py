@@ -767,39 +767,54 @@ def render_sales_page():
     st.markdown('</div>', unsafe_allow_html=True)
 
     # 當月每日業績總覽（by 地區）
-    st.markdown('<div class="section-card"><div class="section-title">當月每日業績總覽</div>', unsafe_allow_html=True)
-    if daily_df.empty:
-        st.warning("目前沒有資料")
-    else:
-        city_rows = []
-        city_order = ["台北", "台中", "桃園", "新竹", "高雄"]
+st.markdown(
+    '<div class="section-card"><div class="section-title">當月每日業績總覽</div>',
+    unsafe_allow_html=True
+)
 
-        for _, row in daily_df.iterrows():
-            dt = row.get("日期", "")
-            for city in city_order:
-                sales_col = f"{city}業績"
-                ratio_col = f"{city}佔比"
-                city_rows.append({
-                    "日期": dt,
-                    "城市": city,
-                    "業績": row.get(sales_col, 0),
-                    "佔比": row.get(ratio_col, 0),
-                })
+if daily_df.empty:
+    st.warning("目前沒有資料")
+else:
+    # 欄位順序固定（照你畫面）
+    cols = [
+        "日期",
+        "台北業績", "台北佔比",
+        "台中業績", "台中佔比",
+        "桃園業績", "桃園佔比",
+        "新竹業績", "新竹佔比",
+        "高雄業績", "高雄佔比",
+        "全區合計"
+    ]
 
-        daily_by_city_df = pd.DataFrame(city_rows)
+    # 避免缺欄位報錯
+    exist_cols = [c for c in cols if c in daily_df.columns]
+    df_show = daily_df[exist_cols].copy()
 
-        daily_style = (
-            daily_by_city_df.style
-            .format({
-                "業績": "{:,.0f}",
-                "佔比": "{:.2%}",
-            })
-            .set_properties(subset=["日期", "城市"], **{"text-align": "left"})
-            .set_properties(subset=["業績", "佔比"], **{"text-align": "right"})
+    styled = (
+        df_show.style
+        .format({
+            "台北業績": "{:,.0f}",
+            "台中業績": "{:,.0f}",
+            "桃園業績": "{:,.0f}",
+            "新竹業績": "{:,.0f}",
+            "高雄業績": "{:,.0f}",
+            "全區合計": "{:,.0f}",
+            "台北佔比": "{:.2%}",
+            "台中佔比": "{:.2%}",
+            "桃園佔比": "{:.2%}",
+            "新竹佔比": "{:.2%}",
+            "高雄佔比": "{:.2%}",
+        })
+        .set_properties(subset=["日期"], **{"text-align": "left"})
+        .set_properties(
+            subset=[c for c in exist_cols if c != "日期"],
+            **{"text-align": "right"}
         )
+    )
 
-        st.dataframe(daily_style, use_container_width=True, hide_index=True)
-    st.markdown('</div>', unsafe_allow_html=True)
+    st.dataframe(styled, use_container_width=True, hide_index=True)
+
+st.markdown('</div>', unsafe_allow_html=True)
 
     # 當月累積執行紀錄
     st.markdown('<div class="section-card"><div class="section-title">當月累積執行紀錄</div>', unsafe_allow_html=True)
