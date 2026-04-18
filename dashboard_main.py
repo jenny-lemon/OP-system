@@ -536,7 +536,7 @@ def render_main_page():
     st.markdown('<div class="section-card">', unsafe_allow_html=True)
     st.markdown('<div class="section-title">報表任務</div>', unsafe_allow_html=True)
 
-    header = st.columns([2.0, 1.1, 1.8, 1.2, 1.2, 1.3, 0.8])
+    header = st.columns([2.0, 1.1, 1.8, 1.2, 1.1, 1.3, 0.8])
     header[0].markdown("**檔案名稱**")
     header[1].markdown("**目前排程**")
     header[2].markdown("**修改排程**")
@@ -552,27 +552,29 @@ def render_main_page():
             default_minute=task["default_minute"],
         )
         status_text, status_cls = render_launchd_status(task["label"], status_map)
-        result_data = st.session_state.task_results.get(task["task_key"], None)
+        result_data = st.session_state.task_results.get(task["task_key"])
 
-        row = st.columns([2.0, 1.1, 1.8, 1.2, 1.2, 1.3, 0.8])
+        row = st.columns([2.0, 1.1, 1.8, 1.2, 1.1, 1.3, 0.8])
 
         with row[0]:
             st.markdown(f"**{task['name']}**")
-            st.markdown(f'<div class="script-note">{task["script"]}</div>', unsafe_allow_html=True)
+            st.caption(task["script"])
 
         with row[1]:
-            current_schedule = f'{sched["hour"]}:{sched["minute"]}' if sched["hour"] and sched["minute"] else "—"
-            st.write(current_schedule)
-            if sched["source"] == "default":
-                st.caption("顯示預設值")
+            if sched["hour"] and sched["minute"]:
+                st.write(f'{sched["hour"]}:{sched["minute"]}')
+            else:
+                st.write("—")
+            if sched.get("source") == "default":
+                st.caption("預設值")
 
         with row[2]:
-            c1, c2, c3 = st.columns([1, 1, 0.9])
+            c1, c2, c3 = st.columns([1, 1, 0.8])
             with c1:
                 hour_val = st.text_input(
                     "時",
                     value=sched["hour"],
-                    key=f"hour_{task['task_key']}",
+                    key=f'hour_{task["task_key"]}',
                     label_visibility="collapsed",
                     placeholder="時",
                 )
@@ -580,14 +582,14 @@ def render_main_page():
                 minute_val = st.text_input(
                     "分",
                     value=sched["minute"],
-                    key=f"minute_{task['task_key']}",
+                    key=f'minute_{task["task_key"]}',
                     label_visibility="collapsed",
                     placeholder="分",
                 )
             with c3:
-                if st.button("💾", key=f"save_{task['task_key']}", use_container_width=True):
+                if st.button("💾", key=f'save_{task["task_key"]}', use_container_width=True):
                     if not task["plist"].exists():
-                        st.warning(f"{task['name']}：雲端版無法直接修改本機排程")
+                        st.warning(f'{task["name"]}：目前雲端環境無法直接修改本機 plist')
                     elif not hour_val.isdigit() or not minute_val.isdigit():
                         st.error("時間必須是數字")
                     else:
@@ -598,7 +600,7 @@ def render_main_page():
                             day=sched["day"],
                         )
                         if code == 0:
-                            st.success(f"{task['name']} 排程已更新")
+                            st.success(f'{task["name"]} 排程已更新')
                             st.rerun()
                         else:
                             st.error(err or out or "更新失敗")
@@ -613,17 +615,18 @@ def render_main_page():
             if result_data is None:
                 st.write("—")
             elif result_data["code"] == 0:
-                st.markdown('<span class="result-ok">成功</span>', unsafe_allow_html=True)
+                st.success("成功")
             else:
-                st.markdown('<span class="result-fail">失敗</span>', unsafe_allow_html=True)
+                st.error("失敗")
 
         with row[5]:
             st.write(calc_next_run(sched["day"], sched["hour"], sched["minute"]))
 
         with row[6]:
-            if st.button("▶", key=f"run_{task['task_key']}", use_container_width=True):
-                with st.spinner(f"執行中：{task['name']}"):
+            if st.button("▶", key=f'run_{task["task_key"]}', use_container_width=True):
+                with st.spinner(f'執行中：{task["name"]}'):
                     code, out, err = run_shell(task["cmd"])
+
                 st.session_state.task_results[task["task_key"]] = {
                     "name": task["name"],
                     "code": code,
@@ -633,11 +636,11 @@ def render_main_page():
                 }
                 st.rerun()
 
-        result_data = st.session_state.task_results.get(task["task_key"], None)
+        result_data = st.session_state.task_results.get(task["task_key"])
         if result_data is not None:
             st.markdown(f"**{task['name']} 執行結果**")
-            st.write(f"執行時間：{result_data['ran_at']}")
-            st.write(f"回傳碼：{result_data['code']}")
+            st.write(f'執行時間：{result_data["ran_at"]}')
+            st.write(f'回傳碼：{result_data["code"]}')
 
             if result_data["code"] == 0:
                 st.success("執行成功")
@@ -647,16 +650,16 @@ def render_main_page():
                 st.markdown("**失敗原因**")
                 st.code(fail_reason)
 
-            with st.expander("查看 stdout / stderr"):
+            with st.expander("查看完整 stdout / stderr"):
                 st.text_area(
-                    f"stdout_{task['task_key']}",
+                    f'stdout_{task["task_key"]}',
                     result_data["stdout"] or "(無輸出)",
-                    height=160,
+                    height=140,
                 )
                 st.text_area(
-                    f"stderr_{task['task_key']}",
+                    f'stderr_{task["task_key"]}',
                     result_data["stderr"] or "(無錯誤)",
-                    height=160,
+                    height=140,
                 )
 
         st.divider()
