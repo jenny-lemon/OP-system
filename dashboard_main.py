@@ -698,10 +698,7 @@ def render_sales_page():
         if st.button("📂 重新讀取已存資料", key="sales_reload", use_container_width=True):
             st.rerun()
 
-    # -------------------------------------------------
-    # 優先顯示剛更新的結果
-    # 沒有剛更新時，才讀 latest
-    # -------------------------------------------------
+    # 優先使用剛更新的結果；沒有就讀 latest
     if result is not None:
         df4 = result.get("df4", pd.DataFrame())
         daily_df = result.get("daily_df", pd.DataFrame())
@@ -721,17 +718,12 @@ def render_sales_page():
         daily_history_df = load_daily_history_for_current_month()
         error_msg = meta.get("error") if isinstance(meta, dict) else None
 
-    # -------------------------------------------------
-    # 顯示錯誤訊息，但不要讓整頁炸掉
-    # -------------------------------------------------
     if error_msg:
         st.error(error_msg)
 
     st.info(f"最新更新時間：{updated_at}")
 
-    # -------------------------------------------------
     # KPI
-    # -------------------------------------------------
     total = get_sales_total_row(df4)
     k1, k2, k3, k4 = st.columns(4)
 
@@ -746,39 +738,93 @@ def render_sales_page():
         k3.metric("本月家電加總", sales_fmt_int(total.get("本月家電加總", 0)))
         k4.metric("儲值金", sales_fmt_int(total.get("儲值金", 0)))
 
-    # -------------------------------------------------
     # 各區月度摘要
-    # -------------------------------------------------
     st.markdown('<div class="section-card"><div class="section-title">各區月度摘要</div>', unsafe_allow_html=True)
     if df4.empty:
         st.warning("目前沒有資料")
     else:
-        st.dataframe(style_sales_df4(df4), use_container_width=True, hide_index=True)
+        summary_style = (
+            df4.style
+            .format({
+                "本月加總": "{:,.0f}",
+                "次月加總": "{:,.0f}",
+                "本月家電加總": "{:,.0f}",
+                "次月家電加總": "{:,.0f}",
+                "儲值金": "{:,.0f}",
+                "本月佔比": "{:.2%}",
+                "次月佔比": "{:.2%}",
+            })
+            .set_properties(subset=["城市"], **{"text-align": "left"})
+            .set_properties(
+                subset=[
+                    "本月加總", "本月佔比", "次月加總", "次月佔比",
+                    "本月家電加總", "次月家電加總", "儲值金"
+                ],
+                **{"text-align": "right"}
+            )
+        )
+        st.dataframe(summary_style, use_container_width=True, hide_index=True)
     st.markdown('</div>', unsafe_allow_html=True)
 
-    # -------------------------------------------------
-    # 當月每日業績總覽
-    # -------------------------------------------------
+    # 當月每日業績總覽（by 地區）
     st.markdown('<div class="section-card"><div class="section-title">當月每日業績總覽</div>', unsafe_allow_html=True)
     if daily_df.empty:
         st.warning("目前沒有資料")
     else:
-        st.dataframe(style_sales_daily(daily_df), use_container_width=True, hide_index=True)
+        city_rows = []
+        city_order = ["台北", "台中", "桃園", "新竹", "高雄"]
+
+        for _, row in daily_df.iterrows():
+            dt = row.get("日期", "")
+            for city in city_order:
+                sales_col = f"{city}業績"
+                ratio_col = f"{city}佔比"
+                city_rows.append({
+                    "日期": dt,
+                    "城市": city,
+                    "業績": row.get(sales_col, 0),
+                    "佔比": row.get(ratio_col, 0),
+                })
+
+        daily_by_city_df = pd.DataFrame(city_rows)
+
+        daily_style = (
+            daily_by_city_df.style
+            .format({
+                "業績": "{:,.0f}",
+                "佔比": "{:.2%}",
+            })
+            .set_properties(subset=["日期", "城市"], **{"text-align": "left"})
+            .set_properties(subset=["業績", "佔比"], **{"text-align": "right"})
+        )
+
+        st.dataframe(daily_style, use_container_width=True, hide_index=True)
     st.markdown('</div>', unsafe_allow_html=True)
 
-    # -------------------------------------------------
     # 當月累積執行紀錄
-    # -------------------------------------------------
     st.markdown('<div class="section-card"><div class="section-title">當月累積執行紀錄</div>', unsafe_allow_html=True)
     if execution_log_df.empty:
         st.warning("目前沒有執行紀錄")
     else:
-        st.dataframe(style_sales_exec(execution_log_df), use_container_width=True, hide_index=True)
+        exec_style = (
+            execution_log_df.style
+            .format({
+                "本月加總": "{:,.0f}",
+                "次月加總": "{:,.0f}",
+                "本月家電加總": "{:,.0f}",
+                "次月家電加總": "{:,.0f}",
+                "儲值金": "{:,.0f}",
+            })
+            .set_properties(subset=["id", "執行時間", "來源"], **{"text-align": "left"})
+            .set_properties(
+                subset=["本月加總", "次月加總", "本月家電加總", "次月家電加總", "儲值金"],
+                **{"text-align": "right"}
+            )
+        )
+        st.dataframe(exec_style, use_container_width=True, hide_index=True)
     st.markdown('</div>', unsafe_allow_html=True)
 
-    # -------------------------------------------------
     # 當月每日業績總覽留存紀錄
-    # -------------------------------------------------
     st.markdown('<div class="section-card"><div class="section-title">當月每日業績總覽留存紀錄</div>', unsafe_allow_html=True)
     if daily_history_df.empty:
         st.warning("目前沒有留存紀錄")
@@ -795,12 +841,25 @@ def render_sales_page():
         if "daily_json" in display_history.columns:
             display_history = display_history.drop(columns=["daily_json"])
 
-        st.dataframe(style_sales_history(display_history), use_container_width=True, hide_index=True)
+        history_style = display_history.style
+        if "今日全區合計" in display_history.columns:
+            history_style = (
+                history_style
+                .format({"今日全區合計": "{:,.0f}"})
+                .set_properties(
+                    subset=[c for c in ["id", "執行時間", "來源", "日期", "daily_rows"] if c in display_history.columns],
+                    **{"text-align": "left"}
+                )
+                .set_properties(
+                    subset=[c for c in ["今日全區合計"] if c in display_history.columns],
+                    **{"text-align": "right"}
+                )
+            )
+
+        st.dataframe(history_style, use_container_width=True, hide_index=True)
     st.markdown('</div>', unsafe_allow_html=True)
 
-    # -------------------------------------------------
     # 信件預覽
-    # -------------------------------------------------
     st.markdown('<div class="section-card"><div class="section-title">信件預覽</div>', unsafe_allow_html=True)
     if email_html:
         st.components.v1.html(email_html, height=520, scrolling=True)
