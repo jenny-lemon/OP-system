@@ -257,11 +257,24 @@ def halfmonth_build_cmd(period_arg, city):
 
 
 def render_main_page():
-    st.markdown(
-        '<div class="page-header"><div class="page-title">排程主控表</div>'
-        '<div class="page-subtitle">GitHub Actions Dashboard</div></div>',
-        unsafe_allow_html=True,
+    PAGE_SIZE = 30
+
+    total_rows = len(daily_df)
+    total_pages = (total_rows - 1) // PAGE_SIZE + 1
+
+    page = st.number_input(
+        "頁數",
+        min_value=1,
+        max_value=total_pages,
+        value=1,
+        step=1,
+        key="daily_df_page"
     )
+
+    start_idx = (page - 1) * PAGE_SIZE
+    end_idx = start_idx + PAGE_SIZE
+
+    page_df = daily_df.iloc[start_idx:end_idx].copy()
 
     if "task_results" not in st.session_state:
         st.session_state.task_results = {}
