@@ -1,6 +1,7 @@
 import json
 import plistlib
 import subprocess
+import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional, Dict, Callable, List
@@ -20,8 +21,7 @@ from paths import (
 from performance_report import (
     generate_sales_report,
     load_execution_log_for_current_month,
-    load_daily_history_for_current_month,
-    delete_daily_history_rows,
+    delete_execution_log_rows,
     LATEST_DIR,
 )
 
