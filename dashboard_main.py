@@ -20,8 +20,6 @@ from paths import (
 )
 from performance_report import (
     generate_sales_report,
-    load_daily_history_for_current_month,
-    delete_daily_history_rows,
     load_output_file_log,
     LATEST_DIR,
 )
@@ -74,14 +72,14 @@ MAIN_REPORT_TASKS = [
 MANUAL_TASKS = [{"name":t["name"],"cmd":t["cmd"]} for t in MAIN_REPORT_TASKS]
 
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
-
 def now_taipei():
     return datetime.now(TZ_TAIPEI)
+
 
 def run_shell(cmd):
     p = subprocess.run(cmd, shell=True, text=True, capture_output=True, executable="/bin/bash")
     return p.returncode, p.stdout, p.stderr
+
 
 def read_last_lines(path, n=200):
     if not path.exists():
@@ -92,10 +90,12 @@ def read_last_lines(path, n=200):
     except Exception as e:
         return f"(讀取失敗) {e}"
 
+
 def file_mtime(path):
     if not path or not path.exists():
         return "-"
     return datetime.fromtimestamp(path.stat().st_mtime, tz=TZ_TAIPEI).strftime("%m/%d %H:%M")
+
 
 def file_size_str(path):
     if not path or not path.exists():
@@ -107,11 +107,13 @@ def file_size_str(path):
         return f"{s/1024:.1f} KB"
     return f"{s/1024/1024:.1f} MB"
 
+
 def find_latest_files(base_dir, limit=10):
     if not base_dir.exists():
         return []
     files = [p for p in base_dir.rglob("*") if p.is_file() and not p.name.startswith((".", "~$"))]
     return sorted(files, key=lambda x: x.stat().st_mtime, reverse=True)[:limit]
+
 
 def get_launchd_status():
     code, out, _ = run_shell("launchctl list | grep com.jenny")
@@ -124,6 +126,7 @@ def get_launchd_status():
             sm[parts[2]] = {"pid": parts[0], "last_exit": parts[1]}
     return sm
 
+
 def launchd_badge(label, status_map):
     info = status_map.get(label)
     if not info:
@@ -132,6 +135,7 @@ def launchd_badge(label, status_map):
     if pid != "-":
         return ("執行中","yellow")
     return ("正常","green") if ex == "0" else (f"異常 {ex}","red")
+
 
 def load_plist_schedule(plist_path, default_hour="", default_minute=""):
     fallback = {"exists":False,"hour":default_hour,"minute":default_minute,"day":"","source":"default"}
@@ -155,6 +159,7 @@ def load_plist_schedule(plist_path, default_hour="", default_minute=""):
     except Exception:
         return fallback
 
+
 def save_plist_schedule(plist_path, hour, minute, day=""):
     with open(plist_path,"rb") as f:
         data = plistlib.load(f)
@@ -168,6 +173,7 @@ def save_plist_schedule(plist_path, hour, minute, day=""):
         plistlib.dump(data, f)
     run_shell(f'launchctl bootout gui/$(id -u) "{plist_path}" 2>/dev/null')
     return run_shell(f'launchctl bootstrap gui/$(id -u) "{plist_path}"')
+
 
 def calc_next_run(day_str, hour_str, minute_str):
     try:
@@ -186,6 +192,7 @@ def calc_next_run(day_str, hour_str, minute_str):
     except Exception:
         return "—"
 
+
 def highlight_log(text):
     lines = []
     for line in text.splitlines():
@@ -201,6 +208,7 @@ def highlight_log(text):
         else:
             lines.append(f'<span class="log-normal">{e}</span>')
     return "\n".join(lines)
+
 
 def load_sales_latest_payload():
     ld = Path(LATEST_DIR)
@@ -223,11 +231,13 @@ def load_sales_latest_payload():
         p["email_html"] = hp.read_text(encoding="utf-8")
     return p
 
+
 def _fmt_int(x):
     try:
         return f"{int(float(x)):,}"
     except Exception:
         return "—"
+
 
 def _fmt_pct(x):
     try:
@@ -235,9 +245,11 @@ def _fmt_pct(x):
     except Exception:
         return "—"
 
+
 def _badge(label, cls):
     CLS = {"green":"b-green","yellow":"b-yellow","red":"b-red","gray":"b-gray","blue":"b-blue"}
     return f'<span class="badge {CLS.get(cls,"b-gray")}">{label}</span>'
+
 
 def render_html_table(df, right_cols, pct_cols, int_cols):
     def _cell(val, col):
@@ -266,8 +278,6 @@ def render_html_table(df, right_cols, pct_cols, int_cols):
     )
 
 
-# ── Half-month helpers ────────────────────────────────────────────────────────
-
 def halfmonth_derive_dates(mode, yyyymm, half, start_date, end_date):
     try:
         if mode == "自訂區間":
@@ -287,14 +297,13 @@ def halfmonth_derive_dates(mode, yyyymm, half, start_date, end_date):
     except Exception:
         return "", "日期錯誤", "", ""
 
+
 def halfmonth_build_cmd(period_arg, city):
     base = f'cd "{BASE_DIR}" && "{PYTHON_CMD}" "上下半月訂單.py" {period_arg}'
     if city != "全部":
         base += f" {city}"
     return base
 
-
-# ── Page: 主控表 ──────────────────────────────────────────────────────────────
 
 def render_main_page():
     st.markdown(
@@ -452,8 +461,6 @@ def render_main_page():
         st.markdown("</div>", unsafe_allow_html=True)
 
 
-# ── Page: 業績報表 ────────────────────────────────────────────────────────────
-
 def render_sales_page():
     st.markdown(
         '<div class="page-header"><div class="page-title">業績報表</div>'
@@ -480,7 +487,6 @@ def render_sales_page():
         daily_df = result.get("daily_df", pd.DataFrame())
         email_html = result.get("email_html", "")
         updated_at = now_taipei().strftime("%Y-%m-%d %H:%M:%S")
-        daily_history_df = result.get("daily_history_df", pd.DataFrame())
         error_msg = result.get("error")
     else:
         payload = load_sales_latest_payload()
@@ -490,7 +496,6 @@ def render_sales_page():
         email_html = payload.get("email_html", "")
         raw_ts = meta.get("updated_at","") if isinstance(meta,dict) else ""
         updated_at = raw_ts if raw_ts else "尚未產生資料"
-        daily_history_df = load_daily_history_for_current_month()
         error_msg = meta.get("error") if isinstance(meta,dict) else None
         if payload.get("df4_error"):
             st.warning(f"df4.csv 讀取錯誤：{payload['df4_error']}")
@@ -536,48 +541,60 @@ def render_sales_page():
 
     st.markdown('<div class="section-card">', unsafe_allow_html=True)
     st.markdown('<div class="section-title">📅 當月每日業績總覽</div>', unsafe_allow_html=True)
-    daily_csv = Path(LATEST_DIR)/"daily_df.csv"
+
+    daily_csv = Path(LATEST_DIR) / "daily_df.csv"
     parts = [
         f"daily_df.csv {'存在' if daily_csv.exists() else '⚠️ 不存在'}（{file_size_str(daily_csv)}，{file_mtime(daily_csv)}）",
         f"載入：{len(daily_df)} 行 × {len(daily_df.columns)} 欄"
     ]
     if not daily_df.empty:
-        parts.append(f"欄位：{', '.join(daily_df.columns[:6].tolist())}{'…' if len(daily_df.columns)>6 else ''}")
+        parts.append(f"欄位：{', '.join(daily_df.columns[:8].tolist())}{'…' if len(daily_df.columns) > 8 else ''}")
     st.caption("  ·  ".join(parts))
 
     if daily_df.empty:
         reason = (
             "daily_df.csv 不存在，請先按「更新資料」。"
             if not daily_csv.exists()
-            else "CSV 存在但無資料列。可能原因：日期欄解析失敗。請查看 Log 確認。"
+            else "CSV 存在但無資料列。"
         )
         st.markdown(f'<div class="empty-state"><span class="icon">📭</span>{reason}</div>', unsafe_allow_html=True)
     else:
-        dcols = ["日期","台北業績","台北佔比","台中業績","台中佔比","桃園業績","桃園佔比","新竹業績","新竹佔比","高雄業績","高雄佔比","全區合計"]
-        ec = [c for c in dcols if c in daily_df.columns]
-        int_d = {c for c in ec if "業績" in c or c=="全區合計"}
-        pct_d = {c for c in ec if "佔比" in c}
-        st.markdown(render_html_table(daily_df[ec].copy(), right_cols=int_d|pct_d, pct_cols=pct_d, int_cols=int_d), unsafe_allow_html=True)
-    st.markdown("</div>", unsafe_allow_html=True)
+        if "id" in daily_df.columns:
+            del_ids = st.multiselect(
+                "勾選要刪除的每日業績總覽紀錄",
+                options=daily_df["id"].astype(str).tolist(),
+                key="del_daily_df_ids"
+            )
 
-    # ✅ 改成 daily history，並加入 ID / 來源 欄位、勾選刪除
-    st.markdown('<div class="section-card">', unsafe_allow_html=True)
-    st.markdown('<div class="section-title">📅 當月每日業績總覽（累積紀錄）</div>', unsafe_allow_html=True)
+            if st.button("🗑 刪除勾選列", key="del_daily_df_btn", use_container_width=True):
+                keep_df = daily_df[~daily_df["id"].astype(str).isin([str(x) for x in del_ids])].copy()
+                keep_df.to_csv(daily_csv, index=False, encoding="utf-8-sig")
+                st.success(f"已刪除 {len(daily_df) - len(keep_df)} 筆")
+                st.rerun()
 
-    if daily_history_df.empty:
-        st.markdown('<div class="empty-state"><span class="icon">📋</span>目前沒有累積紀錄</div>', unsafe_allow_html=True)
-    else:
-        hist_ids = daily_history_df["id"].astype(str).tolist()
-        sel_ids = st.multiselect("勾選要刪除的每日業績總覽紀錄", options=hist_ids, key="del_daily_history")
+        show_cols = [
+            "id", "來源", "日期",
+            "台北業績", "台北佔比",
+            "台中業績", "台中佔比",
+            "桃園業績", "桃園佔比",
+            "新竹業績", "新竹佔比",
+            "高雄業績", "高雄佔比",
+            "全區合計"
+        ]
+        show_cols = [c for c in show_cols if c in daily_df.columns]
 
-        if st.button("🗑 刪除勾選列", key="del_daily_history_btn", use_container_width=True):
-            deleted = delete_daily_history_rows(sel_ids)
-            st.success(f"已刪除 {deleted} 筆")
-            st.rerun()
+        int_d = {c for c in show_cols if "業績" in c or c == "全區合計"}
+        pct_d = {c for c in show_cols if "佔比" in c}
 
-        show_cols = ["id", "來源", "執行時間", "日期", "今日全區合計", "daily_rows"]
-        show_cols = [c for c in show_cols if c in daily_history_df.columns]
-        st.dataframe(daily_history_df[show_cols], use_container_width=True, hide_index=True)
+        st.markdown(
+            render_html_table(
+                daily_df[show_cols].copy(),
+                right_cols=int_d | pct_d,
+                pct_cols=pct_d,
+                int_cols=int_d
+            ),
+            unsafe_allow_html=True
+        )
 
     st.markdown("</div>", unsafe_allow_html=True)
 
@@ -585,8 +602,6 @@ def render_sales_page():
         with st.expander("📧 信件預覽"):
             st.components.v1.html(email_html, height=520, scrolling=True)
 
-
-# ── Page: 上下半月訂單 ────────────────────────────────────────────────────────
 
 def render_halfmonth_page():
     st.markdown(
@@ -706,8 +721,6 @@ def render_halfmonth_page():
     st.markdown("</div>", unsafe_allow_html=True)
 
 
-# ── Page: 手動執行 ────────────────────────────────────────────────────────────
-
 def render_manual_page():
     st.markdown(
         '<div class="page-header"><div class="page-title">手動執行</div>'
@@ -732,8 +745,6 @@ def render_manual_page():
     st.markdown("</div>", unsafe_allow_html=True)
 
 
-# ── Page: Log 監控 ────────────────────────────────────────────────────────────
-
 def render_log_page():
     st.markdown(
         '<div class="page-header"><div class="page-title">Log 監控</div>'
@@ -757,8 +768,6 @@ def render_log_page():
     st.markdown(f'<div class="log-meta">📄 {log_path}&emsp;·&emsp;更新：{file_mtime(log_path)}</div>', unsafe_allow_html=True)
     st.markdown(f'<div class="log-box">{highlight_log(read_last_lines(log_path, n_lines))}</div>', unsafe_allow_html=True)
 
-
-# ── Page: 輸出檔案 ────────────────────────────────────────────────────────────
 
 def render_output_page():
     st.markdown(
@@ -815,8 +824,6 @@ def render_output_page():
     st.markdown("</div>", unsafe_allow_html=True)
 
 
-# ── Page: 程式管理 ────────────────────────────────────────────────────────────
-
 def render_code_page():
     st.markdown(
         '<div class="page-header"><div class="page-title">程式管理</div>'
@@ -825,8 +832,6 @@ def render_code_page():
     )
     st.info("這頁先保留。")
 
-
-# ── Page: 排程設定 ────────────────────────────────────────────────────────────
 
 def render_schedule_page():
     st.markdown(
@@ -862,8 +867,6 @@ def render_schedule_page():
                 st.success(f"✓ 已更新 {task['name']}") if code == 0 else st.error(err or "更新失敗")
         st.markdown("</div>", unsafe_allow_html=True)
 
-
-# ── Router ────────────────────────────────────────────────────────────────────
 
 def render_page(page):
     dispatch = {
