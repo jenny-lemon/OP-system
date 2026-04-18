@@ -528,36 +528,80 @@ def build_daily_overview_df(raw_df: pd.DataFrame) -> pd.DataFrame:
         "全區合計",
     ]
 
-    if raw_df.empty or "日期" not in raw_df.columns:
+    # 沒資料直接回空表
+    if raw_df is None or raw_df.empty:
         return pd.DataFrame(columns=cols)
 
     work = raw_df.copy()
+
+    # 必要欄位不存在就回空表
+    required_cols = ["城市", "月份", "已付款", "待付款"]
+    for c in required_cols:
+        if c not in work.columns:
+            log(f"⚠️ build_daily_overview_df 缺少欄位：{c}")
+            return pd.DataFrame(columns=cols)
+
+    # 只取本月資料
     work = work[work["月份"] == "本月"].copy()
+    if work.empty:
+        log("⚠️ build_daily_overview_df：本月資料為空")
+        return pd.DataFrame(columns=cols)
+
+    # 日期欄位處理
+    if "日期" not in work.columns:
+        log("⚠️ build_daily_overview_df：raw_df 沒有 日期 欄位")
+        return pd.DataFrame(columns=cols)
 
     work["日期"] = pd.to_datetime(work["日期"], errors="coerce")
     work = work[work["日期"].notna()].copy()
 
     if work.empty:
+        log("⚠️ build_daily_overview_df：日期轉換後全部為空")
         return pd.DataFrame(columns=cols)
 
     work["日期"] = work["日期"].dt.date
+
+    # 業績 = 已付款 + 待付款
+    work["已付款"] = pd.to_numeric(work["已付款"], errors="coerce").fillna(0)
+    work["待付款"] = pd.to_numeric(work["待付款"], errors="coerce").fillna(0)
     work["業績"] = work["已付款"] + work["待付款"]
 
-    today = datetime.today().date()
-    first_day = date(today.year, today.month, 1)
-    all_days = pd.date_range(first_day, today, freq="D").date
+    # 只保留城市清單內資料
+    work = work[work["城市"].isin(CITY_ORDER)].copy()
+    if work.empty:
+        log("⚠️ build_daily_overview_df：篩完城市後沒有資料")
+        return pd.DataFrame(columns=cols)
 
-    grouped = work.groupby(["日期", "城市"], as_index=False)["業績"].sum()
+    # 依日期、城市加總
+    grouped = (
+        work.groupby(["日期", "城市"], as_index=False)["業績"]
+        .sum()
+    )
+
+    if grouped.empty:
+        log("⚠️ build_daily_overview_df：groupby 後沒有資料")
+        return pd.DataFrame(columns=cols)
+
+    # pivot 成你要的橫向格式基礎
     pivot = grouped.pivot(index="日期", columns="城市", values="業績").fillna(0)
 
+    # 補齊所有城市欄位
     for city in CITY_ORDER:
         if city not in pivot.columns:
             pivot[city] = 0
 
     pivot = pivot[CITY_ORDER]
+
+    # 只補到今天，不補未來
+    today = datetime.today().date()
+    first_day = date(today.year, today.month, 1)
+    all_days = pd.date_range(first_day, today, freq="D").date
     pivot = pivot.reindex(all_days, fill_value=0)
+
+    # 全區合計
     pivot["全區合計"] = pivot.sum(axis=1)
 
+    # 組成最後要顯示的表
     out = pd.DataFrame(index=pivot.index)
     out["日期"] = [f"{d.month}/{d.day}" for d in pivot.index]
 
@@ -565,12 +609,15 @@ def build_daily_overview_df(raw_df: pd.DataFrame) -> pd.DataFrame:
         out[f"{city}業績"] = pivot[city].astype(int)
         out[f"{city}佔比"] = pivot.apply(
             lambda r: 0 if r["全區合計"] == 0 else r[city] / r["全區合計"],
-            axis=1
+            axis=1,
         )
 
     out["全區合計"] = pivot["全區合計"].astype(int)
+
+    # 你現在畫面比較像是由月初到今天順排
     out = out.reset_index(drop=True)
 
+    log(f"✅ build_daily_overview_df 完成，筆數 = {len(out)}")
     return out[cols]
 
 
