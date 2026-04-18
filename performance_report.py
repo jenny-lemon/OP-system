@@ -789,6 +789,7 @@ def generate_sales_report(send_email=False, persist_dashboard=True, trigger="das
     ensure_dirs()
     (m_start, m_end), (n_start, n_end) = get_ranges()
     merged = {}
+    city_errors = []
 
     enabled_cities = [city for city in CITY_ORDER if city in ACCOUNTS]
     missing_cities = [city for city in CITY_ORDER if city not in ACCOUNTS]
@@ -797,16 +798,34 @@ def generate_sales_report(send_email=False, persist_dashboard=True, trigger="das
         log(f"⚠️ ACCOUNTS 缺少城市設定，已略過：{', '.join(missing_cities)}")
 
     if not enabled_cities:
-        raise RuntimeError("ACCOUNTS 沒有任何可用城市設定")
+        error_msg = "ACCOUNTS 沒有任何可用城市設定"
+        log(f"❌ {error_msg}")
+        return {
+            "raw_df": pd.DataFrame(),
+            "df1": pd.DataFrame(),
+            "df2": pd.DataFrame(),
+            "df3": pd.DataFrame(),
+            "df4": pd.DataFrame(columns=[
+                "城市", "本月加總", "本月佔比", "次月加總", "次月佔比",
+                "本月家電加總", "次月家電加總", "儲值金"
+            ]),
+            "daily_df": pd.DataFrame(),
+            "email_html": "",
+            "updated_at": now_dt().strftime("%Y-%m-%d %H:%M:%S"),
+            "execution_log_df": load_execution_log_for_current_month(),
+            "daily_history_df": load_daily_history_for_current_month(),
+            "error": error_msg,
+        }
 
     for city in enabled_cities:
         log(f"===== {city} =====")
-
         session = requests.Session()
         acc = ACCOUNTS[city]
 
         try:
             login(session, acc["email"], acc["password"])
+
+            city_row_count = 0
 
             for label, (s, e) in {
                 "本月": (m_start, m_end),
@@ -819,6 +838,7 @@ def generate_sales_report(send_email=False, persist_dashboard=True, trigger="das
                         res.raise_for_status()
 
                         rows = parse_html(res.text)
+                        city_row_count += len(rows)
 
                         for row in rows:
                             key = (
@@ -847,12 +867,47 @@ def generate_sales_report(send_email=False, persist_dashboard=True, trigger="das
                             merged[key]["已付款"] += row["已付款"]
                             merged[key]["待付款"] += row["待付款"]
 
+            if city_row_count == 0:
+                msg = f"{city}：登入成功，但沒有抓到任何表格資料"
+                city_errors.append(msg)
+                log(f"⚠️ {msg}")
+
         except Exception as e:
-            log(f"❌ {city} 失敗：{e}")
+            msg = f"{city} 失敗：{e}"
+            city_errors.append(msg)
+            log(f"❌ {msg}")
 
     raw_df = pd.DataFrame(merged.values())
+
     if raw_df.empty:
-        raise RuntimeError("沒有任何資料可輸出")
+        error_msg = "沒有任何資料可輸出"
+        if city_errors:
+            error_msg += "；" + " / ".join(city_errors)
+
+        log(f"⚠️ {error_msg}")
+
+        empty_df4 = pd.DataFrame(columns=[
+            "城市", "本月加總", "本月佔比", "次月加總", "次月佔比",
+            "本月家電加總", "次月家電加總", "儲值金"
+        ])
+        empty_daily = pd.DataFrame()
+
+        if persist_dashboard:
+            persist_dashboard_payload(empty_df4, empty_daily, "")
+
+        return {
+            "raw_df": pd.DataFrame(),
+            "df1": pd.DataFrame(),
+            "df2": pd.DataFrame(),
+            "df3": pd.DataFrame(),
+            "df4": empty_df4,
+            "daily_df": empty_daily,
+            "email_html": "",
+            "updated_at": now_dt().strftime("%Y-%m-%d %H:%M:%S"),
+            "execution_log_df": load_execution_log_for_current_month(),
+            "daily_history_df": load_daily_history_for_current_month(),
+            "error": error_msg,
+        }
 
     df1 = build_region1_df(raw_df)
     df2 = build_region2_df(raw_df)
@@ -881,8 +936,8 @@ def generate_sales_report(send_email=False, persist_dashboard=True, trigger="das
         "updated_at": now_dt().strftime("%Y-%m-%d %H:%M:%S"),
         "execution_log_df": load_execution_log_for_current_month(),
         "daily_history_df": load_daily_history_for_current_month(),
+        "error": None if not city_errors else " / ".join(city_errors),
     }
-
 
 def main():
     trigger = "schedule"
