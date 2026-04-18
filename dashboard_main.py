@@ -257,24 +257,7 @@ def halfmonth_build_cmd(period_arg, city):
 
 
 def render_main_page():
-    PAGE_SIZE = 30
-
-    total_rows = len(daily_df)
-    total_pages = (total_rows - 1) // PAGE_SIZE + 1
-
-    page = st.number_input(
-        "頁數",
-        min_value=1,
-        max_value=total_pages,
-        value=1,
-        step=1,
-        key="daily_df_page"
-    )
-
-    start_idx = (page - 1) * PAGE_SIZE
-    end_idx = start_idx + PAGE_SIZE
-
-    page_df = daily_df.iloc[start_idx:end_idx].copy()
+    
 
     if "task_results" not in st.session_state:
         st.session_state.task_results = {}
@@ -518,17 +501,34 @@ def render_sales_page():
         int_d = {c for c in show_cols if "業績" in c or c == "全區合計"}
         pct_d = {c for c in show_cols if "佔比" in c}
 
+        PAGE_SIZE = 30
+        total_rows = len(daily_df)
+        total_pages = max(1, (total_rows - 1) // PAGE_SIZE + 1)
+
+        page = st.number_input(
+            "頁數",
+            min_value=1,
+            max_value=total_pages,
+            value=min(st.session_state.get("daily_df_page", 1), total_pages),
+            step=1,
+            key="daily_df_page"
+        )
+
+        start_idx = (page - 1) * PAGE_SIZE
+        end_idx = start_idx + PAGE_SIZE
+        page_df = daily_df.iloc[start_idx:end_idx].copy()
+
+        st.caption(f"第 {page} / {total_pages} 頁（每頁 {PAGE_SIZE} 筆，共 {total_rows} 筆）")
+
         st.markdown(
             render_html_table(
-                daily_df[show_cols].copy(),
+                page_df[show_cols],
                 right_cols=int_d | pct_d,
                 pct_cols=pct_d,
                 int_cols=int_d
             ),
             unsafe_allow_html=True
         )
-
-    st.markdown("</div>", unsafe_allow_html=True)
 
     if email_html:
         with st.expander("📧 信件預覽"):
