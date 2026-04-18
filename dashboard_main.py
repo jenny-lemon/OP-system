@@ -1,13 +1,26 @@
 import json
 import plistlib
 import subprocess
+import tempfile
+import py_compile
+import shutil
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Dict, Callable, List
 
 import pandas as pd
 import streamlit as st
 
+from paths import (
+    PATH_CLEANER_DATA,
+    PATH_CLEANER_SCHEDULE,
+    PATH_HR,
+    PATH_JENNY,
+    PATH_ORDER,
+    PATH_REPORT,
+    PATH_SCHEDULE,
+    PATH_VIP,
+)
 from performance_report import (
     generate_sales_report,
     load_execution_log_for_current_month,
@@ -16,88 +29,133 @@ from performance_report import (
     LATEST_DIR,
 )
 
-# =========================================================
-# 基本設定
-# =========================================================
 TZ_TAIPEI = timezone(timedelta(hours=8))
 
 BASE_DIR = Path("/Users/jenny/lemon")
-LAUNCH_AGENTS_DIR = Path.home() / "Library/LaunchAgents"
 LOG_FILE = BASE_DIR / "cron.log"
+LAUNCH_AGENTS_DIR = Path.home() / "Library/LaunchAgents"
+CONFIG_FILE = BASE_DIR / "dashboard_config.json"
 
-# 這 5 個就是主控表要顯示的列
-REPORT_TASKS = [
+DEFAULT_CONFIG = {
+    "yyyymm_scripts": ["預收.py", "已退款.py"],
+    "halfmonth_scripts": ["上下半月訂單.py"],
+}
+
+OUTPUT_DIRS = {
+    "排班統計表": Path(PATH_SCHEDULE),
+    "專員班表": Path(PATH_CLEANER_SCHEDULE),
+    "專員個資": Path(PATH_CLEANER_DATA),
+    "訂單資料": Path(PATH_ORDER),
+    "業績報表": Path(PATH_REPORT),
+    "預收": Path(PATH_VIP),
+    "儲值金結算": Path(PATH_VIP),
+    "儲值金預收": Path(PATH_VIP),
+    "上下半月訂單": Path(PATH_HR),
+    "已退款": Path(PATH_HR),
+}
+
+CATEGORY_MATCHERS: Dict[str, Callable[[Path], bool]] = {
+    "排班統計表": lambda p: p.suffix.lower() in {".xlsx", ".xls", ".csv", ".gsheet"},
+    "專員班表": lambda p: p.suffix.lower() in {".xlsx", ".xls", ".csv", ".gsheet"},
+    "專員個資": lambda p: p.suffix.lower() in {".xlsx", ".xls", ".csv", ".gsheet"},
+    "訂單資料": lambda p: p.suffix.lower() in {".xlsx", ".xls", ".csv", ".gsheet"},
+    "業績報表": lambda p: p.suffix.lower() in {".xlsx", ".xls", ".csv", ".html", ".json"},
+    "預收": lambda p: "預收" in p.name and "儲值金預收" not in p.name,
+    "儲值金結算": lambda p: "儲值金結算" in p.name,
+    "儲值金預收": lambda p: "儲值金預收" in p.name,
+    "上下半月訂單": lambda p: "訂單-" in p.name and "已退款" not in p.name,
+    "已退款": lambda p: "已退款" in p.name,
+}
+
+NAV_PAGES = [
+    "主控表",
+    "業績報表",
+    "上下半月訂單",
+    "手動執行",
+    "Log 監控",
+    "輸出檔案",
+    "程式管理",
+    "排程設定",
+]
+NAV_ICONS = ["📋", "💹", "🧾", "▶️", "📄", "📂", "⚙️", "⏰"]
+
+MAIN_REPORT_TASKS = [
     {
         "name": "排班統計表",
-        "key": "schedule_report",
+        "task_key": "schedule_report",
         "script": "schedule_report.py",
         "label": "com.jenny.daily01",
         "plist": LAUNCH_AGENTS_DIR / "com.jenny.daily01.plist",
+        "default_hour": "01",
+        "default_minute": "10",
         "cmd": f'cd "{BASE_DIR}" && /usr/bin/python3 schedule_report.py',
     },
     {
         "name": "專員班表",
-        "key": "staff_schedule",
+        "task_key": "staff_schedule",
         "script": "staff_schedule.py",
         "label": "com.jenny.daily01b",
         "plist": LAUNCH_AGENTS_DIR / "com.jenny.daily01b.plist",
+        "default_hour": "01",
+        "default_minute": "20",
         "cmd": f'cd "{BASE_DIR}" && /usr/bin/python3 staff_schedule.py',
     },
     {
         "name": "專員個資",
-        "key": "staff_info",
+        "task_key": "staff_info",
         "script": "staff_info.py",
         "label": "com.jenny.daily02b",
         "plist": LAUNCH_AGENTS_DIR / "com.jenny.daily02b.plist",
+        "default_hour": "01",
+        "default_minute": "30",
         "cmd": f'cd "{BASE_DIR}" && /usr/bin/python3 staff_info.py',
     },
     {
         "name": "訂單資料",
-        "key": "orders_report",
+        "task_key": "orders_report",
         "script": "orders_report.py",
         "label": "com.jenny.daily02",
         "plist": LAUNCH_AGENTS_DIR / "com.jenny.daily02.plist",
+        "default_hour": "01",
+        "default_minute": "40",
         "cmd": f'cd "{BASE_DIR}" && /usr/bin/python3 orders_report.py',
     },
     {
         "name": "業績報表",
-        "key": "performance_report",
+        "task_key": "performance_report",
         "script": "performance_report.py",
         "label": "com.jenny.sales08",
         "plist": LAUNCH_AGENTS_DIR / "com.jenny.sales08.plist",
+        "default_hour": "08",
+        "default_minute": "00",
         "cmd": f'cd "{BASE_DIR}" && /usr/bin/python3 performance_report.py dashboard false',
     },
 ]
 
-# 其他頁面保留
 MANUAL_TASKS = [
-    {
-        "name": "排班統計表",
-        "cmd": f'cd "{BASE_DIR}" && /usr/bin/python3 schedule_report.py',
-    },
-    {
-        "name": "專員班表",
-        "cmd": f'cd "{BASE_DIR}" && /usr/bin/python3 staff_schedule.py',
-    },
-    {
-        "name": "專員個資",
-        "cmd": f'cd "{BASE_DIR}" && /usr/bin/python3 staff_info.py',
-    },
-    {
-        "name": "訂單資料",
-        "cmd": f'cd "{BASE_DIR}" && /usr/bin/python3 orders_report.py',
-    },
-    {
-        "name": "業績報表",
-        "cmd": f'cd "{BASE_DIR}" && /usr/bin/python3 performance_report.py dashboard false',
-    },
+    {"name": "排班統計表", "cmd": f'cd "{BASE_DIR}" && /usr/bin/python3 schedule_report.py'},
+    {"name": "專員班表", "cmd": f'cd "{BASE_DIR}" && /usr/bin/python3 staff_schedule.py'},
+    {"name": "專員個資", "cmd": f'cd "{BASE_DIR}" && /usr/bin/python3 staff_info.py'},
+    {"name": "訂單資料", "cmd": f'cd "{BASE_DIR}" && /usr/bin/python3 orders_report.py'},
+    {"name": "業績報表", "cmd": f'cd "{BASE_DIR}" && /usr/bin/python3 performance_report.py dashboard false'},
 ]
 
-# =========================================================
-# 共用工具
-# =========================================================
+
 def now_taipei():
     return datetime.now(TZ_TAIPEI)
+
+
+def load_config():
+    if CONFIG_FILE.exists():
+        try:
+            return json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            return DEFAULT_CONFIG.copy()
+    return DEFAULT_CONFIG.copy()
+
+
+def save_config(cfg):
+    CONFIG_FILE.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def run_shell(cmd: str):
@@ -111,13 +169,7 @@ def run_shell(cmd: str):
     return p.returncode, p.stdout, p.stderr
 
 
-def format_dt(dt: Optional[datetime]) -> str:
-    if not dt:
-        return "—"
-    return dt.strftime("%m/%d %H:%M")
-
-
-def read_last_lines(path: Path, n: int = 80) -> str:
+def read_last_lines(path: Path, n: int = 120) -> str:
     if not path.exists():
         return "(尚無 log)"
     try:
@@ -128,12 +180,38 @@ def read_last_lines(path: Path, n: int = 80) -> str:
         return f"(讀取失敗) {e}"
 
 
+def file_mtime(path: Optional[Path]) -> str:
+    if not path or not path.exists():
+        return "-"
+    ts = datetime.fromtimestamp(path.stat().st_mtime, tz=TZ_TAIPEI)
+    return ts.strftime("%m/%d %H:%M")
+
+
+def file_mtime_dt(path: Optional[Path]):
+    if not path or not path.exists():
+        return None
+    try:
+        return datetime.fromtimestamp(path.stat().st_mtime, tz=TZ_TAIPEI)
+    except Exception:
+        return None
+
+
+def file_size_str(path: Optional[Path]) -> str:
+    if not path or not path.exists():
+        return "-"
+    size = path.stat().st_size
+    if size < 1024:
+        return f"{size} B"
+    if size < 1024 * 1024:
+        return f"{size/1024:.1f} KB"
+    return f"{size/1024/1024:.1f} MB"
+
+
 def get_launchd_status():
     code, out, _ = run_shell("launchctl list | grep com.jenny")
     status_map = {}
     if code != 0 and not out.strip():
         return status_map
-
     for line in out.splitlines():
         parts = line.split()
         if len(parts) >= 3:
@@ -142,24 +220,30 @@ def get_launchd_status():
     return status_map
 
 
-def render_status_info(label: str, status_map: dict):
+def render_launchd_status(label: str, status_map: dict):
     info = status_map.get(label)
     if not info:
-        return {"text": "未載入", "cls": "gray"}
-
+        return ("未載入", "gray")
     pid = info["pid"]
     last_exit = info["last_exit"]
-
     if pid != "-":
-        return {"text": f"執行中 PID {pid}", "cls": "yellow"}
+        return (f"執行中 PID {pid}", "yellow")
     if last_exit == "0":
-        return {"text": "正常", "cls": "green"}
-    return {"text": f"異常 exit {last_exit}", "cls": "red"}
+        return ("正常", "green")
+    return (f"異常 exit {last_exit}", "red")
 
 
-def load_plist_schedule(plist_path: Path):
+def load_plist_schedule(plist_path: Path, default_hour: str = "", default_minute: str = ""):
+    fallback = {
+        "exists": False,
+        "hour": default_hour,
+        "minute": default_minute,
+        "day": "",
+        "source": "default",
+    }
+
     if not plist_path.exists():
-        return {"exists": False, "hour": "", "minute": "", "day": ""}
+        return fallback
 
     try:
         with open(plist_path, "rb") as f:
@@ -171,12 +255,13 @@ def load_plist_schedule(plist_path: Path):
 
         return {
             "exists": True,
-            "hour": str(interval.get("Hour", "")),
-            "minute": str(interval.get("Minute", "")),
+            "hour": str(interval.get("Hour", default_hour)).zfill(2) if str(interval.get("Hour", default_hour)) != "" else "",
+            "minute": str(interval.get("Minute", default_minute)).zfill(2) if str(interval.get("Minute", default_minute)) != "" else "",
             "day": str(interval.get("Day", "")),
+            "source": "plist",
         }
     except Exception:
-        return {"exists": False, "hour": "", "minute": "", "day": ""}
+        return fallback
 
 
 def save_plist_schedule(plist_path: Path, hour: str, minute: str, day: str = ""):
@@ -222,12 +307,51 @@ def calc_next_run(day_str: str, hour_str: str, minute_str: str) -> str:
         return "—"
 
 
-# =========================================================
-# 業績報表工具
-# =========================================================
+def is_valid_output_file(path: Path, category: str) -> bool:
+    if not path.is_file():
+        return False
+    if path.name.startswith(".") or path.name.startswith("~$"):
+        return False
+    matcher = CATEGORY_MATCHERS.get(category)
+    if matcher is None:
+        return True
+    try:
+        return bool(matcher(path))
+    except Exception:
+        return False
+
+
+def find_latest_files(base_dir: Path, limit: int = 10, category: Optional[str] = None):
+    if not base_dir.exists():
+        return []
+    files: List[Path] = []
+    try:
+        for p in base_dir.rglob("*"):
+            if not p.is_file():
+                continue
+            if p.name.startswith(".") or p.name.startswith("~$"):
+                continue
+            if category and not is_valid_output_file(p, category):
+                continue
+            files.append(p)
+    except Exception:
+        return []
+    files.sort(key=lambda x: x.stat().st_mtime, reverse=True)
+    return files[:limit]
+
+
+def open_in_finder(path: Path):
+    try:
+        if path.is_file():
+            subprocess.Popen(["open", "-R", str(path)])
+        else:
+            subprocess.Popen(["open", str(path)])
+    except Exception as e:
+        st.error(f"無法開啟 Finder：{e}")
+
+
 def load_sales_latest_payload():
     latest_dir = Path(LATEST_DIR)
-
     df4_path = latest_dir / "df4.csv"
     daily_path = latest_dir / "daily_df.csv"
     meta_path = latest_dir / "meta.json"
@@ -320,24 +444,21 @@ def get_sales_total_row(df4):
     return total.iloc[0]
 
 
-# =========================================================
-# 畫面樣式
-# =========================================================
 def inject_styles():
     st.markdown("""
     <style>
     .page-title {
-        font-size: 38px;
+        font-size: 42px;
         font-weight: 900;
         color: #0f172a;
         margin-bottom: 6px;
     }
     .page-subtitle {
-        font-size: 14px;
+        font-size: 16px;
         color: #94a3b8;
         letter-spacing: 0.08em;
         font-family: monospace;
-        margin-bottom: 20px;
+        margin-bottom: 18px;
     }
     .section-card {
         background: #ffffff;
@@ -348,17 +469,17 @@ def inject_styles():
         box-shadow: 0 4px 14px rgba(0,0,0,0.05);
     }
     .section-title {
-        font-size: 18px;
-        font-weight: 800;
-        margin-bottom: 14px;
+        font-size: 22px;
+        font-weight: 900;
+        margin-bottom: 16px;
         color: #0f172a;
     }
     .status-pill {
         display: inline-block;
-        padding: 6px 12px;
+        padding: 7px 14px;
         border-radius: 999px;
-        font-size: 13px;
-        font-weight: 700;
+        font-size: 14px;
+        font-weight: 800;
     }
     .status-green {
         background: #dcfce7;
@@ -376,21 +497,23 @@ def inject_styles():
         background: #e5e7eb;
         color: #475569;
     }
-    .task-header {
-        font-size: 13px;
-        color: #94a3b8;
+    .result-ok {
+        color: #15803d;
         font-weight: 800;
-        padding: 6px 0 10px 0;
-        border-bottom: 1px solid #e5e7eb;
-        margin-bottom: 10px;
+    }
+    .result-fail {
+        color: #b91c1c;
+        font-weight: 800;
+    }
+    .script-note {
+        color: #6b7280;
+        font-size: 14px;
+        margin-top: 6px;
     }
     </style>
     """, unsafe_allow_html=True)
 
 
-# =========================================================
-# 各頁面
-# =========================================================
 def render_main_page():
     inject_styles()
     st.markdown('<div class="page-title">主控表</div>', unsafe_allow_html=True)
@@ -398,59 +521,64 @@ def render_main_page():
 
     status_map = get_launchd_status()
 
+    if "task_results" not in st.session_state:
+        st.session_state.task_results = {}
+
     st.markdown('<div class="section-card">', unsafe_allow_html=True)
     st.markdown('<div class="section-title">報表任務</div>', unsafe_allow_html=True)
 
-    header = st.columns([2.2, 1.3, 1.6, 1.6, 1.0, 0.9])
+    header = st.columns([2.0, 1.1, 1.8, 1.2, 1.2, 1.3, 0.8])
     header[0].markdown("**檔案名稱**")
-    header[1].markdown("**排程時間**")
+    header[1].markdown("**目前排程**")
     header[2].markdown("**修改排程**")
     header[3].markdown("**執行狀態**")
-    header[4].markdown("**下次執行**")
-    header[5].markdown("**執行**")
+    header[4].markdown("**執行結果**")
+    header[5].markdown("**下次執行**")
+    header[6].markdown("**執行**")
 
-    for task in REPORT_TASKS:
-        sched = load_plist_schedule(task["plist"])
-        status = render_status_info(task["label"], status_map)
+    for task in MAIN_REPORT_TASKS:
+        sched = load_plist_schedule(
+            task["plist"],
+            default_hour=task["default_hour"],
+            default_minute=task["default_minute"],
+        )
+        status_text, status_cls = render_launchd_status(task["label"], status_map)
+        result_data = st.session_state.task_results.get(task["task_key"], None)
 
-        row = st.columns([2.2, 1.3, 1.6, 1.6, 1.0, 0.9])
+        row = st.columns([2.0, 1.1, 1.8, 1.2, 1.2, 1.3, 0.8])
 
         with row[0]:
             st.markdown(f"**{task['name']}**")
-            st.caption(task["script"])
+            st.markdown(f'<div class="script-note">{task["script"]}</div>', unsafe_allow_html=True)
 
         with row[1]:
-            if sched["exists"]:
-                st.write(f"{sched['hour'].zfill(2)}:{sched['minute'].zfill(2)}")
-            else:
-                st.write("—")
+            current_schedule = f'{sched["hour"]}:{sched["minute"]}' if sched["hour"] and sched["minute"] else "—"
+            st.write(current_schedule)
+            if sched["source"] == "default":
+                st.caption("顯示預設值")
 
         with row[2]:
-            sub1, sub2, sub3 = st.columns([1, 1, 1])
-            hour_key = f"hour_{task['key']}"
-            minute_key = f"minute_{task['key']}"
-            save_key = f"save_{task['key']}"
-
-            with sub1:
+            c1, c2, c3 = st.columns([1, 1, 0.9])
+            with c1:
                 hour_val = st.text_input(
                     "時",
                     value=sched["hour"],
-                    key=hour_key,
+                    key=f"hour_{task['task_key']}",
                     label_visibility="collapsed",
                     placeholder="時",
                 )
-            with sub2:
+            with c2:
                 minute_val = st.text_input(
                     "分",
                     value=sched["minute"],
-                    key=minute_key,
+                    key=f"minute_{task['task_key']}",
                     label_visibility="collapsed",
                     placeholder="分",
                 )
-            with sub3:
-                if st.button("保存", key=save_key, use_container_width=True):
-                    if not sched["exists"]:
-                        st.error(f"{task['name']} 找不到 plist")
+            with c3:
+                if st.button("💾", key=f"save_{task['task_key']}", use_container_width=True):
+                    if not task["plist"].exists():
+                        st.warning(f"{task['name']}：雲端版無法直接修改本機排程")
                     elif not hour_val.isdigit() or not minute_val.isdigit():
                         st.error("時間必須是數字")
                     else:
@@ -461,29 +589,66 @@ def render_main_page():
                             day=sched["day"],
                         )
                         if code == 0:
-                            st.success(f"{task['name']} 已更新")
+                            st.success(f"{task['name']} 排程已更新")
                             st.rerun()
                         else:
                             st.error(err or out or "更新失敗")
 
         with row[3]:
-            cls = status["cls"]
             st.markdown(
-                f'<span class="status-pill status-{cls}">{status["text"]}</span>',
+                f'<span class="status-pill status-{status_cls}">{status_text}</span>',
                 unsafe_allow_html=True,
             )
 
         with row[4]:
-            st.write(calc_next_run(sched["day"], sched["hour"], sched["minute"]))
+            if result_data is None:
+                st.write("—")
+            elif result_data["code"] == 0:
+                st.markdown('<span class="result-ok">成功</span>', unsafe_allow_html=True)
+            else:
+                st.markdown('<span class="result-fail">失敗</span>', unsafe_allow_html=True)
 
         with row[5]:
-            if st.button("▶", key=f"run_{task['key']}", use_container_width=True):
+            st.write(calc_next_run(sched["day"], sched["hour"], sched["minute"]))
+
+        with row[6]:
+            if st.button("▶", key=f"run_{task['task_key']}", use_container_width=True):
                 with st.spinner(f"執行中：{task['name']}"):
                     code, out, err = run_shell(task["cmd"])
-                st.write(f"### {task['name']} 執行結果")
-                st.write(f"回傳碼：`{code}`")
-                st.text_area(f"stdout_{task['key']}", out or "(無輸出)", height=180)
-                st.text_area(f"stderr_{task['key']}", err or "(無錯誤)", height=140)
+                st.session_state.task_results[task["task_key"]] = {
+                    "name": task["name"],
+                    "code": code,
+                    "stdout": out,
+                    "stderr": err,
+                    "ran_at": now_taipei().strftime("%Y-%m-%d %H:%M:%S"),
+                }
+                st.rerun()
+
+        result_data = st.session_state.task_results.get(task["task_key"], None)
+        if result_data is not None:
+            st.markdown(f"**{task['name']} 執行結果**")
+            st.write(f"執行時間：{result_data['ran_at']}")
+            st.write(f"回傳碼：{result_data['code']}")
+
+            if result_data["code"] == 0:
+                st.success("執行成功")
+            else:
+                st.error("執行失敗")
+                fail_reason = result_data["stderr"] or result_data["stdout"] or "沒有收到錯誤訊息"
+                st.markdown("**失敗原因**")
+                st.code(fail_reason)
+
+            with st.expander("查看 stdout / stderr"):
+                st.text_area(
+                    f"stdout_{task['task_key']}",
+                    result_data["stdout"] or "(無輸出)",
+                    height=160,
+                )
+                st.text_area(
+                    f"stderr_{task['task_key']}",
+                    result_data["stderr"] or "(無錯誤)",
+                    height=160,
+                )
 
         st.divider()
 
@@ -656,15 +821,7 @@ def render_code_page():
     inject_styles()
     st.markdown('<div class="page-title">程式管理</div>', unsafe_allow_html=True)
     st.markdown('<div class="page-subtitle">CODE MANAGEMENT</div>', unsafe_allow_html=True)
-
-    py_files = list_python_files()
-    if not py_files:
-        st.warning("找不到任何 .py 檔")
-        return
-
-    selected_file = st.selectbox("選擇 Python 檔", py_files, format_func=lambda x: x.name)
-    content = selected_file.read_text(encoding="utf-8", errors="ignore")
-    st.text_area("內容", content, height=500)
+    st.info("這頁先保留。")
 
 
 def render_schedule_page():
@@ -672,10 +829,10 @@ def render_schedule_page():
     st.markdown('<div class="page-title">排程設定</div>', unsafe_allow_html=True)
     st.markdown('<div class="page-subtitle">SCHEDULE CONFIG</div>', unsafe_allow_html=True)
 
-    for task in REPORT_TASKS:
-        sched = load_plist_schedule(task["plist"])
+    for task in MAIN_REPORT_TASKS:
+        sched = load_plist_schedule(task["plist"], task["default_hour"], task["default_minute"])
         st.markdown(f"### {task['name']}")
-        st.write(f"目前時間：{sched['hour'].zfill(2)}:{sched['minute'].zfill(2) if sched['minute'] else '—'}")
+        st.write(f"目前時間：{sched['hour']}:{sched['minute']}")
         st.write(f"下次執行：{calc_next_run(sched['day'], sched['hour'], sched['minute'])}")
         st.divider()
 
