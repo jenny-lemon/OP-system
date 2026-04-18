@@ -21,6 +21,7 @@ jobs:
       HSINCHU_PASSWORD: ${{ secrets.HSINCHU_PASSWORD }}
       KAOHSIUNG_EMAIL: ${{ secrets.KAOHSIUNG_EMAIL }}
       KAOHSIUNG_PASSWORD: ${{ secrets.KAOHSIUNG_PASSWORD }}
+      GOOGLE_SERVICE_ACCOUNT: ${{ secrets.GOOGLE_SERVICE_ACCOUNT }}
 
     steps:
       - name: Checkout repository
