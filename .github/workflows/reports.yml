@@ -27,7 +27,7 @@ jobs:
         uses: actions/checkout@v5
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.11'
 
@@ -35,6 +35,21 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install pandas requests beautifulsoup4 lxml streamlit
+
+      - name: Debug account env
+        run: |
+          python - <<'PY'
+          import os
+          keys = [
+              "TAIPEI_EMAIL","TAIPEI_PASSWORD",
+              "TAICHUNG_EMAIL","TAICHUNG_PASSWORD",
+              "TAOYUAN_EMAIL","TAOYUAN_PASSWORD",
+              "HSINCHU_EMAIL","HSINCHU_PASSWORD",
+              "KAOHSIUNG_EMAIL","KAOHSIUNG_PASSWORD",
+          ]
+          for k in keys:
+              print(k, "OK" if os.getenv(k) else "MISSING")
+          PY
 
       - name: Ensure output folders exist
         run: |
@@ -59,7 +74,7 @@ jobs:
           python performance_report.py schedule true
 
       - name: Upload generated files
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: performance-report-output
           path: |
