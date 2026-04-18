@@ -72,6 +72,8 @@ CATEGORY_MATCHERS: Dict[str, Callable[[Path], bool]] = {
     "已退款": lambda p: "已退款" in p.name,
 }
 
+PYTHON_CMD = sys.executable or "python3"
+
 MAIN_REPORT_TASKS = [
     {
         "name": "排班統計表",
@@ -81,7 +83,7 @@ MAIN_REPORT_TASKS = [
         "plist": LAUNCH_AGENTS_DIR / "com.jenny.daily01.plist",
         "default_hour": "01",
         "default_minute": "10",
-        "cmd": f'cd "{BASE_DIR}" && /usr/bin/python3 schedule_report.py',
+        "cmd": f'cd "{BASE_DIR}" && "{PYTHON_CMD}" schedule_report.py',
     },
     {
         "name": "專員班表",
@@ -91,7 +93,7 @@ MAIN_REPORT_TASKS = [
         "plist": LAUNCH_AGENTS_DIR / "com.jenny.daily01b.plist",
         "default_hour": "01",
         "default_minute": "20",
-        "cmd": f'cd "{BASE_DIR}" && /usr/bin/python3 staff_schedule.py',
+        "cmd": f'cd "{BASE_DIR}" && "{PYTHON_CMD}" staff_schedule.py',
     },
     {
         "name": "專員個資",
@@ -101,7 +103,7 @@ MAIN_REPORT_TASKS = [
         "plist": LAUNCH_AGENTS_DIR / "com.jenny.daily02b.plist",
         "default_hour": "01",
         "default_minute": "30",
-        "cmd": f'cd "{BASE_DIR}" && /usr/bin/python3 staff_info.py',
+        "cmd": f'cd "{BASE_DIR}" && "{PYTHON_CMD}" staff_info.py',
     },
     {
         "name": "訂單資料",
@@ -111,7 +113,7 @@ MAIN_REPORT_TASKS = [
         "plist": LAUNCH_AGENTS_DIR / "com.jenny.daily02.plist",
         "default_hour": "01",
         "default_minute": "40",
-        "cmd": f'cd "{BASE_DIR}" && /usr/bin/python3 orders_report.py',
+        "cmd": f'cd "{BASE_DIR}" && "{PYTHON_CMD}" orders_report.py',
     },
     {
         "name": "業績報表",
@@ -121,7 +123,7 @@ MAIN_REPORT_TASKS = [
         "plist": LAUNCH_AGENTS_DIR / "com.jenny.sales08.plist",
         "default_hour": "08",
         "default_minute": "00",
-        "cmd": f'cd "{BASE_DIR}" && /usr/bin/python3 performance_report.py dashboard false',
+        "cmd": f'cd "{BASE_DIR}" && "{PYTHON_CMD}" performance_report.py dashboard false',
     },
 ]
 
