@@ -1,11 +1,11 @@
 """
-dashboard_main.py — render functions only, no page config / CSS / nav.
+dashboard_main.py — cloud version for Streamlit / GitHub Actions.
+No local launchd / plist control.
 Called by opapp.py via render_page().
 """
 
 import json
 import calendar
-import plistlib
 import subprocess
 import sys
 from datetime import datetime, timedelta, timezone, date
@@ -25,51 +25,64 @@ from performance_report import (
 )
 
 TZ_TAIPEI = timezone(timedelta(hours=8))
-LOCAL_BASE_DIR = Path("/Users/jenny/lemon")
-BASE_DIR = LOCAL_BASE_DIR if LOCAL_BASE_DIR.exists() else Path(__file__).resolve().parent
-IS_LOCAL = LOCAL_BASE_DIR.exists()
+BASE_DIR = Path(__file__).resolve().parent
 LOG_FILE = BASE_DIR / "cron.log"
-LAUNCH_AGENTS_DIR = Path.home() / "Library/LaunchAgents"
 PYTHON_CMD = sys.executable or "python3"
 
 CITY_LIST = ["全部", "台北", "台中", "桃園", "新竹", "高雄"]
 
 OUTPUT_DIRS = {
     "排班統計表": Path(PATH_SCHEDULE),
-    "專員班表":   Path(PATH_CLEANER_SCHEDULE),
-    "專員個資":   Path(PATH_CLEANER_DATA),
-    "訂單資料":   Path(PATH_ORDER),
-    "業績報表":   Path(PATH_REPORT),
-    "預收":       Path(PATH_VIP),
+    "專員班表": Path(PATH_CLEANER_SCHEDULE),
+    "專員個資": Path(PATH_CLEANER_DATA),
+    "訂單資料": Path(PATH_ORDER),
+    "業績報表": Path(PATH_REPORT),
+    "預收": Path(PATH_VIP),
     "儲值金結算": Path(PATH_VIP),
     "儲值金預收": Path(PATH_VIP),
     "上下半月訂單": Path(PATH_HR),
-    "已退款":     Path(PATH_HR),
+    "已退款": Path(PATH_HR),
 }
 
 MAIN_REPORT_TASKS = [
-    {"name":"排班統計表","task_key":"schedule_report","script":"schedule_report.py",
-     "label":"com.jenny.daily01","plist":LAUNCH_AGENTS_DIR/"com.jenny.daily01.plist",
-     "default_hour":"01","default_minute":"10",
-     "cmd":f'cd "{BASE_DIR}" && "{PYTHON_CMD}" schedule_report.py'},
-    {"name":"專員班表","task_key":"staff_schedule","script":"staff_schedule.py",
-     "label":"com.jenny.daily01b","plist":LAUNCH_AGENTS_DIR/"com.jenny.daily01b.plist",
-     "default_hour":"01","default_minute":"20",
-     "cmd":f'cd "{BASE_DIR}" && "{PYTHON_CMD}" staff_schedule.py'},
-    {"name":"專員個資","task_key":"staff_info","script":"staff_info.py",
-     "label":"com.jenny.daily02b","plist":LAUNCH_AGENTS_DIR/"com.jenny.daily02b.plist",
-     "default_hour":"01","default_minute":"30",
-     "cmd":f'cd "{BASE_DIR}" && "{PYTHON_CMD}" staff_info.py'},
-    {"name":"訂單資料","task_key":"orders_report","script":"orders_report.py",
-     "label":"com.jenny.daily02","plist":LAUNCH_AGENTS_DIR/"com.jenny.daily02.plist",
-     "default_hour":"01","default_minute":"40",
-     "cmd":f'cd "{BASE_DIR}" && "{PYTHON_CMD}" orders_report.py'},
-    {"name":"業績報表","task_key":"performance_report","script":"performance_report.py",
-     "label":"com.jenny.sales08","plist":LAUNCH_AGENTS_DIR/"com.jenny.sales08.plist",
-     "default_hour":"08","default_minute":"00",
-     "cmd":f'cd "{BASE_DIR}" && "{PYTHON_CMD}" performance_report.py dashboard false'},
+    {
+        "name": "排班統計表",
+        "task_key": "schedule_report",
+        "script": "schedule_report.py",
+        "schedule_text": "GitHub Actions / 依 workflow 設定",
+        "cmd": f'cd "{BASE_DIR}" && "{PYTHON_CMD}" schedule_report.py',
+    },
+    {
+        "name": "專員班表",
+        "task_key": "staff_schedule",
+        "script": "staff_schedule.py",
+        "schedule_text": "GitHub Actions / 依 workflow 設定",
+        "cmd": f'cd "{BASE_DIR}" && "{PYTHON_CMD}" staff_schedule.py',
+    },
+    {
+        "name": "專員個資",
+        "task_key": "staff_info",
+        "script": "staff_info.py",
+        "schedule_text": "GitHub Actions / 依 workflow 設定",
+        "cmd": f'cd "{BASE_DIR}" && "{PYTHON_CMD}" staff_info.py',
+    },
+    {
+        "name": "訂單資料",
+        "task_key": "orders_report",
+        "script": "orders_report.py",
+        "schedule_text": "GitHub Actions / 依 workflow 設定",
+        "cmd": f'cd "{BASE_DIR}" && "{PYTHON_CMD}" orders_report.py',
+    },
+    {
+        "name": "業績報表",
+        "task_key": "performance_report",
+        "script": "performance_report.py",
+        "schedule_text": "GitHub Actions / 每天 08:00（台北）",
+        "cmd": f'cd "{BASE_DIR}" && "{PYTHON_CMD}" performance_report.py dashboard false',
+    },
 ]
-MANUAL_TASKS = [{"name":t["name"],"cmd":t["cmd"]} for t in MAIN_REPORT_TASKS]
+
+MANUAL_TASKS = [{"name": t["name"], "cmd": t["cmd"]} for t in MAIN_REPORT_TASKS]
 
 
 def now_taipei():
@@ -115,95 +128,17 @@ def find_latest_files(base_dir, limit=10):
     return sorted(files, key=lambda x: x.stat().st_mtime, reverse=True)[:limit]
 
 
-def get_launchd_status():
-    code, out, _ = run_shell("launchctl list | grep com.jenny")
-    sm = {}
-    if code != 0 and not out.strip():
-        return sm
-    for line in out.splitlines():
-        parts = line.split()
-        if len(parts) >= 3:
-            sm[parts[2]] = {"pid": parts[0], "last_exit": parts[1]}
-    return sm
-
-
-def launchd_badge(label, status_map):
-    info = status_map.get(label)
-    if not info:
-        return ("未載入","gray")
-    pid, ex = info["pid"], info["last_exit"]
-    if pid != "-":
-        return ("執行中","yellow")
-    return ("正常","green") if ex == "0" else (f"異常 {ex}","red")
-
-
-def load_plist_schedule(plist_path, default_hour="", default_minute=""):
-    fallback = {"exists":False,"hour":default_hour,"minute":default_minute,"day":"","source":"default"}
-    if not plist_path.exists():
-        return fallback
-    try:
-        with open(plist_path,"rb") as f:
-            data = plistlib.load(f)
-        iv = data.get("StartCalendarInterval", {})
-        if isinstance(iv, list):
-            iv = iv[0] if iv else {}
-        def _z(v, fb):
-            return str(v).zfill(2) if str(v).strip() != "" else fb
-        return {
-            "exists":True,
-            "hour":_z(iv.get("Hour",default_hour),default_hour),
-            "minute":_z(iv.get("Minute",default_minute),default_minute),
-            "day":str(iv.get("Day","")),
-            "source":"plist"
-        }
-    except Exception:
-        return fallback
-
-
-def save_plist_schedule(plist_path, hour, minute, day=""):
-    with open(plist_path,"rb") as f:
-        data = plistlib.load(f)
-    iv = {}
-    if day.strip():
-        iv["Day"] = int(day)
-    iv["Hour"] = int(hour)
-    iv["Minute"] = int(minute)
-    data["StartCalendarInterval"] = iv
-    with open(plist_path,"wb") as f:
-        plistlib.dump(data, f)
-    run_shell(f'launchctl bootout gui/$(id -u) "{plist_path}" 2>/dev/null')
-    return run_shell(f'launchctl bootstrap gui/$(id -u) "{plist_path}"')
-
-
-def calc_next_run(day_str, hour_str, minute_str):
-    try:
-        hour, minute = int(hour_str), int(minute_str)
-        now = now_taipei().replace(tzinfo=None)
-        if str(day_str).strip():
-            day = int(day_str)
-            c = now.replace(day=day, hour=hour, minute=minute, second=0, microsecond=0)
-            if c <= now:
-                c = c.replace(month=now.month + 1) if now.month < 12 else c.replace(year=now.year + 1, month=1)
-            return c.strftime("%Y-%m-%d %H:%M")
-        c = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
-        if c <= now:
-            c += timedelta(days=1)
-        return c.strftime("%Y-%m-%d %H:%M")
-    except Exception:
-        return "—"
-
-
 def highlight_log(text):
     lines = []
     for line in text.splitlines():
-        e = line.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;")
-        if any(k in line for k in ["Traceback","Error","ERROR","❌","PermissionError","FAILED"]):
+        e = line.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        if any(k in line for k in ["Traceback", "Error", "ERROR", "❌", "PermissionError", "FAILED"]):
             lines.append(f'<span class="log-err">{e}</span>')
-        elif any(k in line for k in ["✅","SUCCESS","success","完成","Done"]):
+        elif any(k in line for k in ["✅", "SUCCESS", "success", "完成", "Done"]):
             lines.append(f'<span class="log-ok">{e}</span>')
-        elif any(k in line for k in ["WARNING","warn","⚠"]):
+        elif any(k in line for k in ["WARNING", "warn", "⚠"]):
             lines.append(f'<span class="log-warn">{e}</span>')
-        elif any(k in line for k in ["INFO","開始","Start"]):
+        elif any(k in line for k in ["INFO", "開始", "Start"]):
             lines.append(f'<span class="log-info">{e}</span>')
         else:
             lines.append(f'<span class="log-normal">{e}</span>')
@@ -212,8 +147,8 @@ def highlight_log(text):
 
 def load_sales_latest_payload():
     ld = Path(LATEST_DIR)
-    p = {"df4":pd.DataFrame(),"daily_df":pd.DataFrame(),"meta":{},"email_html":""}
-    for key, fname in [("df4","df4.csv"),("daily_df","daily_df.csv")]:
+    p = {"df4": pd.DataFrame(), "daily_df": pd.DataFrame(), "meta": {}, "email_html": ""}
+    for key, fname in [("df4", "df4.csv"), ("daily_df", "daily_df.csv")]:
         fp = ld / fname
         if fp.exists():
             try:
@@ -247,13 +182,19 @@ def _fmt_pct(x):
 
 
 def _badge(label, cls):
-    CLS = {"green":"b-green","yellow":"b-yellow","red":"b-red","gray":"b-gray","blue":"b-blue"}
-    return f'<span class="badge {CLS.get(cls,"b-gray")}">{label}</span>'
+    cls_map = {
+        "green": "b-green",
+        "yellow": "b-yellow",
+        "red": "b-red",
+        "gray": "b-gray",
+        "blue": "b-blue",
+    }
+    return f'<span class="badge {cls_map.get(cls, "b-gray")}">{label}</span>'
 
 
 def render_html_table(df, right_cols, pct_cols, int_cols):
     def _cell(val, col):
-        if pd.isna(val) or str(val).strip() in ("","nan"):
+        if pd.isna(val) or str(val).strip() in ("", "nan"):
             return "—"
         if col in pct_cols:
             return _fmt_pct(val)
@@ -261,16 +202,26 @@ def render_html_table(df, right_cols, pct_cols, int_cols):
             return _fmt_int(val)
         return str(val)
 
-    TH = ("padding:10px 14px;font-size:10px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;"
-          "color:#64748b;border-bottom:2px solid #e8ecf0;white-space:nowrap;background:#fafafa;")
-    TB = "padding:9px 14px;font-size:13px;color:#1e293b;border-bottom:1px solid #f1f5f9;white-space:nowrap;"
-    TR = TB + "text-align:right;font-variant-numeric:tabular-nums;font-family:'DM Mono','Menlo',monospace;"
-    TL = TB + "text-align:left;"
-    ths = "".join(f'<th style="{TH}text-align:{"right" if c in right_cols else "left"}">{c}</th>' for c in df.columns)
+    th_style = (
+        "padding:10px 14px;font-size:10px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;"
+        "color:#64748b;border-bottom:2px solid #e8ecf0;white-space:nowrap;background:#fafafa;"
+    )
+    td_base = "padding:9px 14px;font-size:13px;color:#1e293b;border-bottom:1px solid #f1f5f9;white-space:nowrap;"
+    td_right = td_base + "text-align:right;font-variant-numeric:tabular-nums;font-family:'DM Mono','Menlo',monospace;"
+    td_left = td_base + "text-align:left;"
+
+    ths = "".join(
+        f'<th style="{th_style}text-align:{"right" if c in right_cols else "left"}">{c}</th>'
+        for c in df.columns
+    )
     rows = []
     for _, row in df.iterrows():
-        tds = "".join(f'<td style="{TR if c in right_cols else TL}">{_cell(row[c], c)}</td>' for c in df.columns)
+        tds = "".join(
+            f'<td style="{td_right if c in right_cols else td_left}">{_cell(row[c], c)}</td>'
+            for c in df.columns
+        )
         rows.append(f"<tr>{tds}</tr>")
+
     return (
         f'<div style="overflow-x:auto;border:1px solid #e8ecf0;border-radius:10px;">'
         f'<table style="width:100%;border-collapse:collapse;background:#fff;">'
@@ -308,8 +259,8 @@ def halfmonth_build_cmd(period_arg, city):
 def render_main_page():
     st.markdown(
         '<div class="page-header"><div class="page-title">排程主控表</div>'
-        '<div class="page-subtitle">Schedule Dashboard</div></div>',
-        unsafe_allow_html=True
+        '<div class="page-subtitle">GitHub Actions Dashboard</div></div>',
+        unsafe_allow_html=True,
     )
 
     if "task_results" not in st.session_state:
@@ -317,110 +268,82 @@ def render_main_page():
     if "latest_run_key" not in st.session_state:
         st.session_state.latest_run_key = None
 
-    status_map = get_launchd_status()
-    count_ok = sum(1 for t in MAIN_REPORT_TASKS if launchd_badge(t["label"], status_map)[1] == "green")
-    count_run = sum(1 for t in MAIN_REPORT_TASKS if launchd_badge(t["label"], status_map)[1] == "yellow")
-    count_err = len(MAIN_REPORT_TASKS) - count_ok - count_run
-    ran_today = sum(1 for v in st.session_state.task_results.values() if v)
+    total_tasks = len(MAIN_REPORT_TASKS)
+    manual_count = sum(1 for v in st.session_state.task_results.values() if v)
+    success_count = sum(1 for v in st.session_state.task_results.values() if v and v.get("code") == 0)
+    fail_count = sum(1 for v in st.session_state.task_results.values() if v and v.get("code") != 0)
 
-    st.markdown(f"""<div class="kpi-row">
-      <div class="kpi-card blue"><div class="kpi-label">Total</div><div class="kpi-value">{len(MAIN_REPORT_TASKS)}</div><div class="kpi-sub">已設定排程</div></div>
-      <div class="kpi-card green"><div class="kpi-label">Normal</div><div class="kpi-value">{count_ok}</div><div class="kpi-sub">上次退出正常</div></div>
-      <div class="kpi-card amber"><div class="kpi-label">Running</div><div class="kpi-value">{count_run}</div><div class="kpi-sub">目前執行中</div></div>
-      <div class="kpi-card {"red" if count_err>0 else "blue"}"><div class="kpi-label">本次操作</div><div class="kpi-value">{ran_today}</div><div class="kpi-sub">本次 session 已執行</div></div>
-    </div>""", unsafe_allow_html=True)
+    st.markdown(
+        f"""<div class="kpi-row">
+          <div class="kpi-card blue"><div class="kpi-label">Total</div><div class="kpi-value">{total_tasks}</div><div class="kpi-sub">可手動執行任務</div></div>
+          <div class="kpi-card green"><div class="kpi-label">Success</div><div class="kpi-value">{success_count}</div><div class="kpi-sub">本次 session 成功</div></div>
+          <div class="kpi-card amber"><div class="kpi-label">Manual Runs</div><div class="kpi-value">{manual_count}</div><div class="kpi-sub">本次 session 已執行</div></div>
+          <div class="kpi-card {"red" if fail_count > 0 else "blue"}"><div class="kpi-label">Schedule</div><div class="kpi-value">GHA</div><div class="kpi-sub">自動排程由 GitHub Actions 執行</div></div>
+        </div>""",
+        unsafe_allow_html=True,
+    )
+
+    st.info("雲端版不使用 launchd / plist。自動排程請由 GitHub Actions workflow 執行；這裡保留手動執行與結果檢視。")
 
     st.markdown('<div class="section-card">', unsafe_allow_html=True)
     st.markdown('<div class="section-title">📋 報表任務</div>', unsafe_allow_html=True)
-    st.markdown("""<div style="display:grid;grid-template-columns:1.4fr .8fr 1.5fr .9fr .9fr .8fr .5fr;
-      gap:0;padding:0 4px 9px;border-bottom:1px solid #e8ecf0;margin-bottom:2px;">
-      <span style="font-size:9px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#94a3b8;">任務 / 腳本</span>
-      <span style="font-size:9px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#94a3b8;">launchd</span>
-      <span style="font-size:9px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#94a3b8;">排程時間（可改）</span>
-      <span style="font-size:9px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#94a3b8;">目前設定</span>
-      <span style="font-size:9px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#94a3b8;">最近結果</span>
-      <span style="font-size:9px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#94a3b8;">下次執行</span>
-      <span style="font-size:9px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#94a3b8;text-align:center;">▶</span>
-    </div>""", unsafe_allow_html=True)
+    st.markdown(
+        """<div style="display:grid;grid-template-columns:1.6fr 1.4fr 1fr 1fr .5fr;
+          gap:0;padding:0 4px 9px;border-bottom:1px solid #e8ecf0;margin-bottom:2px;">
+          <span style="font-size:9px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#94a3b8;">任務 / 腳本</span>
+          <span style="font-size:9px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#94a3b8;">排程方式</span>
+          <span style="font-size:9px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#94a3b8;">最近結果</span>
+          <span style="font-size:9px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#94a3b8;">最近執行</span>
+          <span style="font-size:9px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#94a3b8;text-align:center;">▶</span>
+        </div>""",
+        unsafe_allow_html=True,
+    )
 
     for task in MAIN_REPORT_TASKS:
-        sched = load_plist_schedule(task["plist"], task["default_hour"], task["default_minute"])
-        ld_text, ld_cls = launchd_badge(task["label"], status_map)
         result = st.session_state.task_results.get(task["task_key"])
 
         if result is None:
-            res_badge, res_time = _badge("尚未執行","gray"), ""
+            res_badge = _badge("尚未執行", "gray")
+            res_time = "—"
         elif result["code"] == 0:
-            res_badge, res_time = _badge("成功","green"), result.get("ran_at","")[-8:]
+            res_badge = _badge("成功", "green")
+            res_time = result.get("ran_at", "")
         else:
-            res_badge, res_time = _badge("失敗","red"), result.get("ran_at","")[-8:]
+            res_badge = _badge("失敗", "red")
+            res_time = result.get("ran_at", "")
 
-        c1,c2,c3,c4,c5,c6,c7 = st.columns([1.4,.8,1.5,.9,.9,.8,.5])
+        c1, c2, c3, c4, c5 = st.columns([1.6, 1.4, 1.0, 1.0, .5])
 
         with c1:
             st.markdown(
                 f"<span style='font-weight:700;color:#0f172a;font-size:13px'>{task['name']}</span><br>"
                 f"<span style='font-size:10.5px;color:#94a3b8;font-family:monospace'>{task['script']}</span>",
-                unsafe_allow_html=True
+                unsafe_allow_html=True,
             )
-
         with c2:
-            st.markdown(_badge(ld_text, ld_cls), unsafe_allow_html=True)
-
+            st.markdown(
+                f"<span style='font-size:12px;color:#1e293b;font-weight:600'>{task['schedule_text']}</span>",
+                unsafe_allow_html=True,
+            )
         with c3:
-            ci1,ci2,ci3 = st.columns([1,1,.65])
-            with ci1:
-                h_val = st.text_input("時", value=sched["hour"], key=f'h_{task["task_key"]}',
-                                      label_visibility="collapsed", placeholder="HH")
-            with ci2:
-                m_val = st.text_input("分", value=sched["minute"], key=f'm_{task["task_key"]}',
-                                      label_visibility="collapsed", placeholder="MM")
-            with ci3:
-                st.markdown('<div class="save-btn">', unsafe_allow_html=True)
-                if st.button("💾", key=f'save_{task["task_key"]}', use_container_width=True):
-                    if not IS_LOCAL:
-                        st.warning("雲端環境無法修改 plist")
-                    elif not task["plist"].exists():
-                        st.error(f"找不到：{task['plist'].name}")
-                    elif not h_val.isdigit() or not m_val.isdigit():
-                        st.error("必須是數字")
-                    else:
-                        code,_,err = save_plist_schedule(task["plist"], h_val, m_val, sched["day"])
-                        st.success("✓ 已更新") if code == 0 else st.error(err or "失敗")
-                st.markdown("</div>", unsafe_allow_html=True)
-
+            st.markdown(res_badge, unsafe_allow_html=True)
         with c4:
-            note = "" if sched["source"] == "plist" else ' <span style="font-size:9.5px;color:#f59e0b;font-weight:600">(預設)</span>'
             st.markdown(
-                f'<span style="font-family:monospace;font-size:13.5px;font-weight:600;color:#1e293b">'
-                f'{sched["hour"]}:{sched["minute"]}</span>{note}',
-                unsafe_allow_html=True
+                f"<span style='font-size:12px;color:#64748b'>{res_time}</span>",
+                unsafe_allow_html=True,
             )
-
         with c5:
-            st.markdown(
-                f'{res_badge}<br><span style="font-size:10px;color:#94a3b8">{res_time}</span>',
-                unsafe_allow_html=True
-            )
-
-        with c6:
-            st.markdown(
-                f'<span class="next-run">🕐 {calc_next_run(sched["day"],sched["hour"],sched["minute"])}</span>',
-                unsafe_allow_html=True
-            )
-
-        with c7:
             st.markdown('<div class="run-btn">', unsafe_allow_html=True)
             if st.button("▶", key=f'run_{task["task_key"]}', help=f'執行 {task["name"]}'):
                 with st.spinner(f"執行中：{task['name']}…"):
-                    rc,out,err = run_shell(task["cmd"])
+                    rc, out, err = run_shell(task["cmd"])
                 st.session_state.task_results[task["task_key"]] = {
-                    "name":task["name"],
-                    "script":task["script"],
-                    "code":rc,
-                    "stdout":out,
-                    "stderr":err,
-                    "ran_at":now_taipei().strftime("%Y-%m-%d %H:%M:%S")
+                    "name": task["name"],
+                    "script": task["script"],
+                    "code": rc,
+                    "stdout": out,
+                    "stderr": err,
+                    "ran_at": now_taipei().strftime("%Y-%m-%d %H:%M:%S"),
                 }
                 st.session_state.latest_run_key = task["task_key"]
                 st.rerun()
@@ -443,7 +366,7 @@ def render_main_page():
             f'&emsp;<span style="font-size:12px;color:#94a3b8">{latest_result["ran_at"]}</span>'
             f'&emsp;{_badge("✓ 成功","green") if latest_result["code"] == 0 else _badge("✗ 失敗","red")}'
             f'</div>',
-            unsafe_allow_html=True
+            unsafe_allow_html=True,
         )
 
         if latest_result["stdout"].strip():
@@ -469,7 +392,7 @@ def render_sales_page():
     )
 
     result = None
-    c1,c2,c3 = st.columns([1,1,1.5])
+    c1, c2, c3 = st.columns([1, 1, 1.5])
     with c1:
         update_btn = st.button("🔄 更新資料", use_container_width=True)
     with c2:
@@ -494,9 +417,9 @@ def render_sales_page():
         daily_df = payload.get("daily_df", pd.DataFrame())
         meta = payload.get("meta", {})
         email_html = payload.get("email_html", "")
-        raw_ts = meta.get("updated_at","") if isinstance(meta,dict) else ""
+        raw_ts = meta.get("updated_at", "") if isinstance(meta, dict) else ""
         updated_at = raw_ts if raw_ts else "尚未產生資料"
-        error_msg = meta.get("error") if isinstance(meta,dict) else None
+        error_msg = meta.get("error") if isinstance(meta, dict) else None
         if payload.get("df4_error"):
             st.warning(f"df4.csv 讀取錯誤：{payload['df4_error']}")
         if payload.get("daily_df_error"):
@@ -519,24 +442,24 @@ def render_sales_page():
 
     total = None
     if not df4.empty:
-        t = df4[df4["城市"]=="加總"]
+        t = df4[df4["城市"] == "加總"]
         if not t.empty:
             total = t.iloc[0]
 
-    k1,k2,k3,k4 = st.columns(4)
-    k1.metric("本月加總",     _fmt_int(total.get("本月加總",0))     if total is not None else "—")
-    k2.metric("次月加總",     _fmt_int(total.get("次月加總",0))     if total is not None else "—")
-    k3.metric("本月家電加總", _fmt_int(total.get("本月家電加總",0)) if total is not None else "—")
-    k4.metric("儲值金",       _fmt_int(total.get("儲值金",0))       if total is not None else "—")
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("本月加總", _fmt_int(total.get("本月加總", 0)) if total is not None else "—")
+    k2.metric("次月加總", _fmt_int(total.get("次月加總", 0)) if total is not None else "—")
+    k3.metric("本月家電加總", _fmt_int(total.get("本月家電加總", 0)) if total is not None else "—")
+    k4.metric("儲值金", _fmt_int(total.get("儲值金", 0)) if total is not None else "—")
 
     st.markdown('<div class="section-card">', unsafe_allow_html=True)
     st.markdown('<div class="section-title">📊 各區月度摘要</div>', unsafe_allow_html=True)
     if df4.empty:
         st.markdown('<div class="empty-state"><span class="icon">📭</span>目前沒有資料，請先按「更新資料」</div>', unsafe_allow_html=True)
     else:
-        INT4 = {"本月加總","次月加總","本月家電加總","次月家電加總","儲值金"}
-        PCT4 = {"本月佔比","次月佔比"}
-        st.markdown(render_html_table(df4,right_cols=INT4|PCT4,pct_cols=PCT4,int_cols=INT4), unsafe_allow_html=True)
+        int4 = {"本月加總", "次月加總", "本月家電加總", "次月家電加總", "儲值金"}
+        pct4 = {"本月佔比", "次月佔比"}
+        st.markdown(render_html_table(df4, right_cols=int4 | pct4, pct_cols=pct4, int_cols=int4), unsafe_allow_html=True)
     st.markdown("</div>", unsafe_allow_html=True)
 
     st.markdown('<div class="section-card">', unsafe_allow_html=True)
@@ -552,11 +475,7 @@ def render_sales_page():
     st.caption("  ·  ".join(parts))
 
     if daily_df.empty:
-        reason = (
-            "daily_df.csv 不存在，請先按「更新資料」。"
-            if not daily_csv.exists()
-            else "CSV 存在但無資料列。"
-        )
+        reason = "daily_df.csv 不存在，請先按「更新資料」。" if not daily_csv.exists() else "CSV 存在但無資料列。"
         st.markdown(f'<div class="empty-state"><span class="icon">📭</span>{reason}</div>', unsafe_allow_html=True)
     else:
         if "id" in daily_df.columns:
@@ -616,7 +535,8 @@ def render_halfmonth_page():
     mode = st.radio(
         "模式",
         ["上半月 (YYYYMM-1)", "下半月 (YYYYMM-2)", "自訂區間 (YYYYMMDD-YYYYMMDD)"],
-        horizontal=True, label_visibility="collapsed"
+        horizontal=True,
+        label_visibility="collapsed"
     )
 
     today = now_taipei().date()
@@ -628,25 +548,24 @@ def render_halfmonth_page():
         half = "1" if mode.startswith("上") else "2"
         col_a, col_b = st.columns([1, 2])
         with col_a:
-            yyyymm = st.text_input("月份 YYYYMM", value=today.strftime("%Y%m"),
-                                   key="hm_yyyymm", placeholder="例：202604")
+            yyyymm = st.text_input("月份 YYYYMM", value=today.strftime("%Y%m"), key="hm_yyyymm", placeholder="例：202604")
         with col_b:
             st.markdown("<br>", unsafe_allow_html=True)
-            if len(yyyymm)==6 and yyyymm.isdigit():
+            if len(yyyymm) == 6 and yyyymm.isdigit():
                 try:
-                    yr,mo = int(yyyymm[:4]), int(yyyymm[4:])
-                    if half=="1":
-                        s_d,e_d = f"{yr}/{mo:02d}/01", f"{yr}/{mo:02d}/15"
+                    yr, mo = int(yyyymm[:4]), int(yyyymm[4:])
+                    if half == "1":
+                        s_d, e_d = f"{yr}/{mo:02d}/01", f"{yr}/{mo:02d}/15"
                     else:
-                        last = calendar.monthrange(yr,mo)[1]
-                        s_d,e_d = f"{yr}/{mo:02d}/16", f"{yr}/{mo:02d}/{last:02d}"
+                        last = calendar.monthrange(yr, mo)[1]
+                        s_d, e_d = f"{yr}/{mo:02d}/16", f"{yr}/{mo:02d}/{last:02d}"
                     st.markdown(f'<div class="date-chip">📆 {s_d} &nbsp;～&nbsp; {e_d}</div>', unsafe_allow_html=True)
                 except Exception:
                     st.warning("月份格式錯誤")
             else:
                 st.caption("請輸入 6 位數月份，例如 202604")
     else:
-        col_a,col_b = st.columns(2)
+        col_a, col_b = st.columns(2)
         with col_a:
             start_date = st.date_input("開始日期", value=today.replace(day=1), key="hm_start")
         with col_b:
@@ -661,12 +580,12 @@ def render_halfmonth_page():
     cmd = halfmonth_build_cmd(period_arg, city) if period_arg else ""
 
     if cmd:
-        city_txt = city if city!="全部" else "全部城市"
+        city_txt = city if city != "全部" else "全部城市"
         st.markdown(
             f'<div class="cmd-preview">'
             f'<span class="cmd-hl">python3</span> "上下半月訂單.py" '
             f'<span class="cmd-arg">{period_arg}</span>'
-            f'{" <span class=\'cmd-city\'>" + city + "</span>" if city!="全部" else ""}'
+            f'{" <span class=\'cmd-city\'>" + city + "</span>" if city != "全部" else ""}'
             f'<br><span style="color:#64748b;font-size:11px">→ 跑 {city_txt} &nbsp; {s_disp} ～ {e_disp}</span>'
             f'</div>',
             unsafe_allow_html=True
@@ -687,14 +606,14 @@ def render_halfmonth_page():
 
     if run_clicked and cmd:
         with st.spinner(f"執行中：{label} {city}…"):
-            rc,out,err = run_shell(cmd)
+            rc, out, err = run_shell(cmd)
         st.session_state["hm_last_result"] = {
-            "code":rc,
-            "stdout":out,
-            "stderr":err,
-            "ran_at":now_taipei().strftime("%Y-%m-%d %H:%M:%S"),
-            "label":label,
-            "city":city
+            "code": rc,
+            "stdout": out,
+            "stderr": err,
+            "ran_at": now_taipei().strftime("%Y-%m-%d %H:%M:%S"),
+            "label": label,
+            "city": city
         }
         st.rerun()
 
@@ -706,7 +625,7 @@ def render_halfmonth_page():
             f'<div class="exec-panel {cls}">'
             f'<div class="exec-panel-title">▶ {r["label"]} {r["city"]}'
             f'&emsp;<span style="font-size:12px;color:#94a3b8">{r["ran_at"]}</span>'
-            f'&emsp;{_badge("✓ 成功","green") if rc==0 else _badge("✗ 失敗","red")}'
+            f'&emsp;{_badge("✓ 成功","green") if rc == 0 else _badge("✗ 失敗","red")}'
             f'</div>',
             unsafe_allow_html=True
         )
@@ -729,11 +648,11 @@ def render_manual_page():
     )
     st.markdown('<div class="section-card">', unsafe_allow_html=True)
     st.markdown('<div class="section-title">▶ 選擇任務執行</div>', unsafe_allow_html=True)
-    selected = st.selectbox("選擇任務", MANUAL_TASKS, format_func=lambda x:x["name"])
+    selected = st.selectbox("選擇任務", MANUAL_TASKS, format_func=lambda x: x["name"])
     if st.button("▶ 執行", use_container_width=True):
         with st.spinner("執行中…"):
-            rc,out,err = run_shell(selected["cmd"])
-        st.markdown(f"回傳碼：{_badge(f'exit {rc}','green' if rc==0 else 'red')}", unsafe_allow_html=True)
+            rc, out, err = run_shell(selected["cmd"])
+        st.markdown(f"回傳碼：{_badge(f'exit {rc}', 'green' if rc == 0 else 'red')}", unsafe_allow_html=True)
         if out.strip():
             st.markdown('<div class="exec-label">STDOUT</div>', unsafe_allow_html=True)
             st.markdown(f'<div class="log-box">{highlight_log(out)}</div>', unsafe_allow_html=True)
@@ -748,22 +667,21 @@ def render_manual_page():
 def render_log_page():
     st.markdown(
         '<div class="page-header"><div class="page-title">Log 監控</div>'
-        '<div class="page-subtitle">Log Monitor</div></div>',
+        '<div class="page-subtitle">Cloud Log Monitor</div></div>',
         unsafe_allow_html=True
     )
-    log_choices = {
-        "主 log（cron.log）":LOG_FILE,
-        "sales08 stderr":BASE_DIR/"launchd_sales08_stderr.log",
-        "sales18 stderr":BASE_DIR/"launchd_sales18_stderr.log"
-    }
-    c1,c2,c3 = st.columns([3,1,1])
+    st.info("雲端版不使用 launchd stderr log。這裡只保留 app 目錄下可讀取的 log 檔。")
+
+    log_choices = {"主 log（cron.log）": LOG_FILE}
+    c1, c2, c3 = st.columns([3, 1, 1])
     with c1:
         sel_log = st.selectbox("選擇 log 檔", list(log_choices.keys()))
     with c2:
-        n_lines = st.selectbox("顯示行數", [50,100,200,500], index=1)
+        n_lines = st.selectbox("顯示行數", [50, 100, 200, 500], index=1)
     with c3:
         if st.button("🔄 刷新", use_container_width=True):
             st.rerun()
+
     log_path = log_choices[sel_log]
     st.markdown(f'<div class="log-meta">📄 {log_path}&emsp;·&emsp;更新：{file_mtime(log_path)}</div>', unsafe_allow_html=True)
     st.markdown(f'<div class="log-box">{highlight_log(read_last_lines(log_path, n_lines))}</div>', unsafe_allow_html=True)
@@ -780,17 +698,17 @@ def render_output_page():
     st.markdown('<div class="section-title">📦 各分類最新輸出</div>', unsafe_allow_html=True)
 
     rows = []
-    for name,out_dir in OUTPUT_DIRS.items():
+    for name, out_dir in OUTPUT_DIRS.items():
         files = find_latest_files(out_dir, limit=1)
         latest = files[0] if files else None
         rows.append({
-            "分類":name,
-            "最新檔案":latest.name if latest else "(無)",
-            "狀態":"今日完成" if latest and file_mtime(latest).startswith(now_taipei().strftime("%m/%d")) else "未更新",
-            "大小":file_size_str(latest),
-            "完成時間":file_mtime(latest),
-            "資料夾":str(out_dir),
-            "完整路徑":str(latest) if latest else "-"
+            "分類": name,
+            "最新檔案": latest.name if latest else "(無)",
+            "狀態": "今日完成" if latest and file_mtime(latest).startswith(now_taipei().strftime("%m/%d")) else "未更新",
+            "大小": file_size_str(latest),
+            "完成時間": file_mtime(latest),
+            "資料夾": str(out_dir),
+            "完整路徑": str(latest) if latest else "-"
         })
     st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
     st.markdown("</div>", unsafe_allow_html=True)
@@ -830,56 +748,47 @@ def render_code_page():
         '<div class="page-subtitle">Code Management</div></div>',
         unsafe_allow_html=True
     )
-    st.info("這頁先保留。")
+    st.info("雲端版保留此頁。")
 
 
 def render_schedule_page():
     st.markdown(
         '<div class="page-header"><div class="page-title">排程設定</div>'
-        '<div class="page-subtitle">Schedule Config</div></div>',
+        '<div class="page-subtitle">GitHub Actions Schedule</div></div>',
         unsafe_allow_html=True
     )
-    st.info(f"Python：{PYTHON_CMD}")
-    for task in MAIN_REPORT_TASKS:
-        sched = load_plist_schedule(task["plist"], task["default_hour"], task["default_minute"])
-        st.markdown(f'<div class="section-card"><div class="section-title">⏰ {task["name"]}</div>', unsafe_allow_html=True)
-        st.code(task["cmd"], language="bash")
-        c1,c2,c3,c4 = st.columns([1,1,1,2])
-        with c1:
-            day = st.text_input("Day（空白=每日）", value=sched["day"], key=f"sday_{task['label']}")
-        with c2:
-            hour = st.text_input("Hour", value=sched["hour"], key=f"shour_{task['label']}")
-        with c3:
-            minute = st.text_input("Minute", value=sched["minute"], key=f"smin_{task['label']}")
-        with c4:
-            st.markdown(f'<div class="next-run" style="margin-top:28px">🕐 下次執行：{calc_next_run(sched["day"],hour,minute)}</div>', unsafe_allow_html=True)
-        if st.button(f"儲存 {task['name']}", key=f"ssave_{task['label']}", use_container_width=True):
-            if not IS_LOCAL:
-                st.warning("雲端環境無法修改本機 plist")
-            elif not task["plist"].exists():
-                st.error(f"找不到 plist：{task['plist'].name}")
-            elif not hour.isdigit() or not minute.isdigit():
-                st.error("Hour / Minute 必須是數字")
-            elif day.strip() and not day.isdigit():
-                st.error("Day 必須留空或填數字")
-            else:
-                code,_,err = save_plist_schedule(task["plist"], hour, minute, day)
-                st.success(f"✓ 已更新 {task['name']}") if code == 0 else st.error(err or "更新失敗")
-        st.markdown("</div>", unsafe_allow_html=True)
+
+    st.markdown('<div class="section-card">', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">⏰ 排程說明</div>', unsafe_allow_html=True)
+    st.info(
+        "雲端版不使用 Mac launchd / plist。\n\n"
+        "自動排程請改由 GitHub Actions workflow 執行，例如：\n"
+        "- 業績報表：每天 08:00（台北）\n"
+        "- 也可在 GitHub Actions 頁面手動 Run workflow"
+    )
+    st.code(
+        "GitHub Actions workflow:\n"
+        "on:\n"
+        "  workflow_dispatch:\n"
+        "  schedule:\n"
+        "    - cron: '0 0 * * *'  # 台北 08:00",
+        language="yaml",
+    )
+    st.markdown("</div>", unsafe_allow_html=True)
 
 
 def render_page(page):
     dispatch = {
-        "主控表":render_main_page,
-        "業績報表":render_sales_page,
-        "上下半月訂單":render_halfmonth_page,
-        "手動執行":render_manual_page,
-        "Log 監控":render_log_page,
-        "輸出檔案":render_output_page,
-        "程式管理":render_code_page,
-        "排程設定":render_schedule_page,
+        "主控表": render_main_page,
+        "業績報表": render_sales_page,
+        "上下半月訂單": render_halfmonth_page,
+        "手動執行": render_manual_page,
+        "Log 監控": render_log_page,
+        "輸出檔案": render_output_page,
+        "程式管理": render_code_page,
+        "排程設定": render_schedule_page,
     }
-    dispatch.get(page,render_main_page)()
+    dispatch.get(page, render_main_page)()
     st.markdown(
         f'<div class="footer-cap">Lemon Clean Scheduler Console &nbsp;·&nbsp; '
         f'{now_taipei().strftime("%Y-%m-%d %H:%M:%S")} (台北)</div>',
