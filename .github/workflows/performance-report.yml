@@ -25,13 +25,15 @@ jobs:
       KAOHSIUNG_PASSWORD: ${{ secrets.KAOHSIUNG_PASSWORD }}
 
     steps:
-      - uses: actions/checkout@v5
+      - name: Checkout repository
+        uses: actions/checkout@v5
 
-      - uses: actions/setup-python@v6
+      - name: Set up Python
+        uses: actions/setup-python@v6
         with:
           python-version: '3.11'
 
-      - name: Debug trigger time
+      - name: Debug trigger
         run: |
           echo "event_name=${{ github.event_name }}"
           echo "schedule=${{ github.event.schedule }}"
@@ -45,8 +47,28 @@ jobs:
           python -m pip install --upgrade pip
           pip install pandas requests beautifulsoup4 lxml streamlit
 
+      - name: Ensure output folders exist
+        run: |
+          python - <<'PY'
+          import os
+          try:
+              from paths import (
+                  PATH_SCHEDULE, PATH_CLEANER_SCHEDULE, PATH_CLEANER_DATA,
+                  PATH_ORDER, PATH_REPORT, PATH_VIP, PATH_HR
+              )
+              for p in [
+                  PATH_SCHEDULE, PATH_CLEANER_SCHEDULE, PATH_CLEANER_DATA,
+                  PATH_ORDER, PATH_REPORT, PATH_VIP, PATH_HR
+              ]:
+                  os.makedirs(p, exist_ok=True)
+                  print("OK:", p)
+          except Exception as e:
+              print(f"skip ensure paths: {e}")
+          PY
+
       - name: Run performance report
-        run: python performance_report.py schedule true
+        run: |
+          python performance_report.py schedule true
 
       - name: Upload generated files
         uses: actions/upload-artifact@v6
