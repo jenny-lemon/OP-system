@@ -145,6 +145,7 @@ def build_export_url(start, end):
 
 
 def get_service_account_info():
+    # 1. Streamlit secrets
     if HAS_STREAMLIT:
         try:
             creds_dict = dict(st.secrets["GOOGLE_SERVICE_ACCOUNT"])
@@ -153,7 +154,13 @@ def get_service_account_info():
         except Exception:
             pass
 
+    # 2. 舊環境變數名稱
     json_str = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")
+    if json_str:
+        return json.loads(json_str)
+
+    # 3. GitHub Actions 目前使用的名稱
+    json_str = os.getenv("GOOGLE_SERVICE_ACCOUNT")
     if json_str:
         return json.loads(json_str)
 
