@@ -40,7 +40,7 @@ REGION3_CATEGORY_ORDER = [
     "清潔+水洗+收納現金+儲值金",
 ]
 
-DASHBOARD_DIR = os.path.join(PATH_REPORT, "_dashboard_sales")
+DASHBOARD_DIR = os.path.join(".", "dashboard_data")
 LATEST_DIR = os.path.join(DASHBOARD_DIR, "latest")
 SNAPSHOT_DIR = os.path.join(DASHBOARD_DIR, "snapshots")
 EXEC_LOG_DIR = os.path.join(DASHBOARD_DIR, "execution_logs")
