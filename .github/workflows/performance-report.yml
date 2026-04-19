@@ -1,5 +1,8 @@
 name: Daily Performance Report
 
+permissions:
+  contents: write
+
 on:
   workflow_dispatch:
   schedule:
@@ -27,6 +30,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v6
@@ -66,17 +71,32 @@ jobs:
               print(f"skip ensure paths: {e}")
           PY
 
+      - name: Run performance report
+        run: |
+          python performance_report.py schedule false
+
+      - name: Show generated dashboard files
+        run: |
+          echo "pwd=$(pwd)"
+          find dashboard_data -maxdepth 3 -type f | sort || true
+          ls -la dashboard_data || true
+          ls -la dashboard_data/latest || true
+
       - name: Upload generated files
         uses: actions/upload-artifact@v6
         with:
           name: performance-report-output
-          path: .
+          path: |
+            dashboard_data
           if-no-files-found: warn
+          compression-level: 6
 
       - name: Commit and push dashboard data
         run: |
-          git config --global user.name "github-actions"
-          git config --global user.email "actions@github.com"
-          git add dashboard_data/latest/*
-          git commit -m "update dashboard data" || echo "no changes"
-          git push
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add dashboard_data
+          git status
+          git diff --cached --quiet && echo "no changes" && exit 0
+          git commit -m "update dashboard data"
+          git push origin HEAD:main
