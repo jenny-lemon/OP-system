@@ -1,6 +1,5 @@
 """
-dashboard_main.py — cloud version for Streamlit / GitHub Actions.
-No local launchd / plist control.
+dashboard_main.py — cloud version with GitHub Actions status.
 Called by opapp.py via render_page().
 """
 
@@ -8,10 +7,12 @@ import json
 import calendar
 import subprocess
 import sys
+import os
 from datetime import datetime, timedelta, timezone, date
 from pathlib import Path
 
 import pandas as pd
+import requests
 import streamlit as st
 
 from paths import (
@@ -28,6 +29,9 @@ TZ_TAIPEI = timezone(timedelta(hours=8))
 BASE_DIR = Path(__file__).resolve().parent
 LOG_FILE = BASE_DIR / "cron.log"
 PYTHON_CMD = sys.executable or "python3"
+
+GITHUB_API_BASE = "https://api.github.com"
+GITHUB_API_VERSION = "2022-11-28"
 
 CITY_LIST = ["全部", "台北", "台中", "桃園", "新竹", "高雄"]
 
@@ -49,34 +53,49 @@ MAIN_REPORT_TASKS = [
         "name": "排班統計表",
         "task_key": "schedule_report",
         "script": "schedule_report.py",
-        "schedule_text": "GitHub Actions / 依 workflow 設定",
+        "workflow_file": "nightly-reports.yml",
+        "workflow_job_name": "run-nightly",
+        "workflow_step_name": "Run schedule report",
+        "schedule_text": "GitHub Actions / 每天 01:10（台北）",
         "cmd": f'cd "{BASE_DIR}" && "{PYTHON_CMD}" schedule_report.py',
     },
     {
         "name": "專員班表",
         "task_key": "staff_schedule",
         "script": "staff_schedule.py",
-        "schedule_text": "GitHub Actions / 依 workflow 設定",
+        "workflow_file": "nightly-reports.yml",
+        "workflow_job_name": "run-nightly",
+        "workflow_step_name": "Run staff schedule",
+        "schedule_text": "GitHub Actions / 每天 01:10 後（台北）",
         "cmd": f'cd "{BASE_DIR}" && "{PYTHON_CMD}" staff_schedule.py',
     },
     {
         "name": "專員個資",
         "task_key": "staff_info",
         "script": "staff_info.py",
-        "schedule_text": "GitHub Actions / 依 workflow 設定",
+        "workflow_file": "nightly-reports.yml",
+        "workflow_job_name": "run-nightly",
+        "workflow_step_name": "Run staff info",
+        "schedule_text": "GitHub Actions / 每天 01:10 後（台北）",
         "cmd": f'cd "{BASE_DIR}" && "{PYTHON_CMD}" staff_info.py',
     },
     {
         "name": "訂單資料",
         "task_key": "orders_report",
         "script": "orders_report.py",
-        "schedule_text": "GitHub Actions / 依 workflow 設定",
+        "workflow_file": "nightly-reports.yml",
+        "workflow_job_name": "run-nightly",
+        "workflow_step_name": "Run orders report",
+        "schedule_text": "GitHub Actions / 每天 01:10 後（台北）",
         "cmd": f'cd "{BASE_DIR}" && "{PYTHON_CMD}" orders_report.py',
     },
     {
         "name": "業績報表",
         "task_key": "performance_report",
         "script": "performance_report.py",
+        "workflow_file": "performance-report.yml",
+        "workflow_job_name": "run-performance-report",
+        "workflow_step_name": "Run performance report",
         "schedule_text": "GitHub Actions / 每天 08:00（台北）",
         "cmd": f'cd "{BASE_DIR}" && "{PYTHON_CMD}" performance_report.py dashboard false',
     },
@@ -229,6 +248,187 @@ def render_html_table(df, right_cols, pct_cols, int_cols):
     )
 
 
+def _read_secret_path(path_list, default=None):
+    try:
+        cur = st.secrets
+        for key in path_list:
+            cur = cur[key]
+        return cur
+    except Exception:
+        return default
+
+
+def get_github_config():
+    owner = _read_secret_path(["github", "owner"], os.getenv("GITHUB_OWNER", ""))
+    repo = _read_secret_path(["github", "repo"], os.getenv("GITHUB_REPO", ""))
+    token = _read_secret_path(["github", "token"], os.getenv("GITHUB_TOKEN", ""))
+    branch = _read_secret_path(["github", "branch"], os.getenv("GITHUB_BRANCH", "main"))
+    return owner, repo, token, branch
+
+
+def get_github_headers(token: str):
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": GITHUB_API_VERSION,
+    }
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    return headers
+
+
+def to_taipei_time(text: str):
+    if not text:
+        return ""
+    try:
+        s = text.replace("Z", "+00:00")
+        dt = datetime.fromisoformat(s)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(TZ_TAIPEI).strftime("%Y-%m-%d %H:%M:%S")
+    except Exception:
+        return text
+
+
+def fetch_latest_workflow_run(owner: str, repo: str, token: str, workflow_file: str, branch: str = "main"):
+    url = f"{GITHUB_API_BASE}/repos/{owner}/{repo}/actions/workflows/{workflow_file}/runs"
+    params = {
+        "per_page": 5,
+        "branch": branch,
+        "exclude_pull_requests": "true",
+    }
+    r = requests.get(url, headers=get_github_headers(token), params=params, timeout=30)
+    r.raise_for_status()
+    data = r.json()
+    runs = data.get("workflow_runs", [])
+    return runs[0] if runs else None
+
+
+def fetch_jobs_for_run(owner: str, repo: str, token: str, run_id: int):
+    url = f"{GITHUB_API_BASE}/repos/{owner}/{repo}/actions/runs/{run_id}/jobs"
+    params = {"per_page": 100}
+    r = requests.get(url, headers=get_github_headers(token), params=params, timeout=30)
+    r.raise_for_status()
+    return r.json().get("jobs", [])
+
+
+def _map_run_badge(status: str, conclusion: str):
+    if status == "completed":
+        if conclusion == "success":
+            return ("成功", "green")
+        if conclusion in ("failure", "timed_out", "cancelled", "action_required", "startup_failure"):
+            return ("失敗", "red")
+        if conclusion in ("skipped", "neutral"):
+            return ("略過", "gray")
+        return (conclusion or "完成", "gray")
+    if status in ("queued", "requested", "waiting", "pending"):
+        return ("排隊中", "yellow")
+    if status == "in_progress":
+        return ("執行中", "yellow")
+    return ("未知", "gray")
+
+
+def _step_status_from_job(job: dict, step_name: str):
+    steps = job.get("steps", []) or []
+    for step in steps:
+        if step.get("name") == step_name:
+            return {
+                "status": step.get("status", ""),
+                "conclusion": step.get("conclusion", ""),
+                "started_at": step.get("started_at", ""),
+                "completed_at": step.get("completed_at", ""),
+                "number": step.get("number"),
+            }
+    return None
+
+
+def fetch_github_task_statuses(tasks):
+    owner, repo, token, branch = get_github_config()
+    result = {
+        "available": False,
+        "reason": "",
+        "task_status": {},
+        "summary": {},
+    }
+
+    if not owner or not repo:
+        result["reason"] = "未設定 github.owner / github.repo"
+        return result
+    if not token:
+        result["reason"] = "未設定 github.token"
+        return result
+
+    result["available"] = True
+
+    workflow_cache = {}
+    job_cache = {}
+
+    try:
+        workflow_files = sorted(set(t["workflow_file"] for t in tasks))
+
+        for wf in workflow_files:
+            run = fetch_latest_workflow_run(owner, repo, token, wf, branch=branch)
+            workflow_cache[wf] = run
+            if run and run.get("id"):
+                job_cache[run["id"]] = fetch_jobs_for_run(owner, repo, token, run["id"])
+    except Exception as e:
+        result["available"] = False
+        result["reason"] = f"GitHub API 讀取失敗：{e}"
+        return result
+
+    for task in tasks:
+        wf = task["workflow_file"]
+        run = workflow_cache.get(wf)
+
+        if not run:
+            result["task_status"][task["task_key"]] = {
+                "badge_text": "尚未執行",
+                "badge_cls": "gray",
+                "ran_at": "—",
+                "actor": "",
+                "run_url": "",
+                "workflow_name": wf,
+            }
+            continue
+
+        run_status = run.get("status", "")
+        run_conclusion = run.get("conclusion", "")
+        badge_text, badge_cls = _map_run_badge(run_status, run_conclusion)
+        run_url = run.get("html_url", "")
+        actor = ((run.get("triggering_actor") or {}).get("login")
+                 or (run.get("actor") or {}).get("login")
+                 or "")
+        ran_at = to_taipei_time(run.get("created_at", ""))
+
+        task_state = {
+            "badge_text": badge_text,
+            "badge_cls": badge_cls,
+            "ran_at": ran_at or "—",
+            "actor": actor,
+            "run_url": run_url,
+            "workflow_name": wf,
+        }
+
+        jobs = job_cache.get(run.get("id"), [])
+        target_job = None
+        for job in jobs:
+            if job.get("name") == task["workflow_job_name"]:
+                target_job = job
+                break
+
+        if target_job:
+            step_state = _step_status_from_job(target_job, task["workflow_step_name"])
+            if step_state:
+                s_badge_text, s_badge_cls = _map_run_badge(step_state.get("status", ""), step_state.get("conclusion", ""))
+                ran_time = to_taipei_time(step_state.get("started_at") or target_job.get("started_at") or run.get("created_at", ""))
+                task_state["badge_text"] = s_badge_text
+                task_state["badge_cls"] = s_badge_cls
+                task_state["ran_at"] = ran_time or task_state["ran_at"]
+
+        result["task_status"][task["task_key"]] = task_state
+
+    return result
+
+
 def halfmonth_derive_dates(mode, yyyymm, half, start_date, end_date):
     try:
         if mode == "自訂區間":
@@ -257,58 +457,69 @@ def halfmonth_build_cmd(period_arg, city):
 
 
 def render_main_page():
-    
+    st.markdown(
+        '<div class="page-header"><div class="page-title">排程主控表</div>'
+        '<div class="page-subtitle">GitHub Actions Dashboard</div></div>',
+        unsafe_allow_html=True,
+    )
 
     if "task_results" not in st.session_state:
         st.session_state.task_results = {}
     if "latest_run_key" not in st.session_state:
         st.session_state.latest_run_key = None
 
+    github_status = fetch_github_task_statuses(MAIN_REPORT_TASKS)
+
     total_tasks = len(MAIN_REPORT_TASKS)
     manual_count = sum(1 for v in st.session_state.task_results.values() if v)
-    success_count = sum(1 for v in st.session_state.task_results.values() if v and v.get("code") == 0)
-    fail_count = sum(1 for v in st.session_state.task_results.values() if v and v.get("code") != 0)
+    github_success = 0
+    github_fail = 0
+    if github_status["available"]:
+        for item in github_status["task_status"].values():
+            if item["badge_cls"] == "green":
+                github_success += 1
+            elif item["badge_cls"] == "red":
+                github_fail += 1
 
     st.markdown(
         f"""<div class="kpi-row">
           <div class="kpi-card blue"><div class="kpi-label">Total</div><div class="kpi-value">{total_tasks}</div><div class="kpi-sub">可手動執行任務</div></div>
-          <div class="kpi-card green"><div class="kpi-label">Success</div><div class="kpi-value">{success_count}</div><div class="kpi-sub">本次 session 成功</div></div>
-          <div class="kpi-card amber"><div class="kpi-label">Manual Runs</div><div class="kpi-value">{manual_count}</div><div class="kpi-sub">本次 session 已執行</div></div>
-          <div class="kpi-card {"red" if fail_count > 0 else "blue"}"><div class="kpi-label">Schedule</div><div class="kpi-value">GHA</div><div class="kpi-sub">自動排程由 GitHub Actions 執行</div></div>
+          <div class="kpi-card green"><div class="kpi-label">GitHub Success</div><div class="kpi-value">{github_success}</div><div class="kpi-sub">最近一次成功數</div></div>
+          <div class="kpi-card {"red" if github_fail > 0 else "amber"}"><div class="kpi-label">GitHub Fail</div><div class="kpi-value">{github_fail}</div><div class="kpi-sub">最近一次失敗數</div></div>
+          <div class="kpi-card blue"><div class="kpi-label">Manual Runs</div><div class="kpi-value">{manual_count}</div><div class="kpi-sub">本次 session 已手動執行</div></div>
         </div>""",
         unsafe_allow_html=True,
     )
 
-    st.info("雲端版不使用 launchd / plist。自動排程請由 GitHub Actions workflow 執行；這裡保留手動執行與結果檢視。")
+    if github_status["available"]:
+        st.info("主控表狀態已改為讀取 GitHub Actions。最近結果與最近執行時間會依 workflow 最新 run 自動更新。")
+    else:
+        st.warning(f"GitHub 狀態未啟用：{github_status['reason']}")
 
     st.markdown('<div class="section-card">', unsafe_allow_html=True)
     st.markdown('<div class="section-title">📋 報表任務</div>', unsafe_allow_html=True)
     st.markdown(
-        """<div style="display:grid;grid-template-columns:1.6fr 1.4fr 1fr 1fr .5fr;
+        """<div style="display:grid;grid-template-columns:1.6fr 1.4fr 1fr 1.1fr .7fr .5fr;
           gap:0;padding:0 4px 9px;border-bottom:1px solid #e8ecf0;margin-bottom:2px;">
           <span style="font-size:9px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#94a3b8;">任務 / 腳本</span>
           <span style="font-size:9px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#94a3b8;">排程方式</span>
           <span style="font-size:9px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#94a3b8;">最近結果</span>
           <span style="font-size:9px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#94a3b8;">最近執行</span>
+          <span style="font-size:9px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#94a3b8;">觸發者</span>
           <span style="font-size:9px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#94a3b8;text-align:center;">▶</span>
         </div>""",
         unsafe_allow_html=True,
     )
 
     for task in MAIN_REPORT_TASKS:
-        result = st.session_state.task_results.get(task["task_key"])
+        gh_item = github_status["task_status"].get(task["task_key"], {}) if github_status["available"] else {}
+        badge_text = gh_item.get("badge_text", "尚未執行")
+        badge_cls = gh_item.get("badge_cls", "gray")
+        ran_at = gh_item.get("ran_at", "—")
+        actor = gh_item.get("actor", "")
+        run_url = gh_item.get("run_url", "")
 
-        if result is None:
-            res_badge = _badge("尚未執行", "gray")
-            res_time = "—"
-        elif result["code"] == 0:
-            res_badge = _badge("成功", "green")
-            res_time = result.get("ran_at", "")
-        else:
-            res_badge = _badge("失敗", "red")
-            res_time = result.get("ran_at", "")
-
-        c1, c2, c3, c4, c5 = st.columns([1.6, 1.4, 1.0, 1.0, .5])
+        c1, c2, c3, c4, c5, c6 = st.columns([1.6, 1.4, 1.0, 1.1, .7, .5])
 
         with c1:
             st.markdown(
@@ -322,13 +533,21 @@ def render_main_page():
                 unsafe_allow_html=True,
             )
         with c3:
-            st.markdown(res_badge, unsafe_allow_html=True)
+            if run_url:
+                st.markdown(f'<a href="{run_url}" target="_blank">{_badge(badge_text, badge_cls)}</a>', unsafe_allow_html=True)
+            else:
+                st.markdown(_badge(badge_text, badge_cls), unsafe_allow_html=True)
         with c4:
             st.markdown(
-                f"<span style='font-size:12px;color:#64748b'>{res_time}</span>",
+                f"<span style='font-size:12px;color:#64748b'>{ran_at}</span>",
                 unsafe_allow_html=True,
             )
         with c5:
+            st.markdown(
+                f"<span style='font-size:12px;color:#64748b'>{actor or '—'}</span>",
+                unsafe_allow_html=True,
+            )
+        with c6:
             st.markdown('<div class="run-btn">', unsafe_allow_html=True)
             if st.button("▶", key=f'run_{task["task_key"]}', help=f'執行 {task["name"]}'):
                 with st.spinner(f"執行中：{task['name']}…"):
@@ -353,7 +572,7 @@ def render_main_page():
     latest_result = st.session_state.task_results.get(latest_run_key) if latest_run_key else None
     if latest_result:
         st.markdown('<div class="section-card">', unsafe_allow_html=True)
-        st.markdown('<div class="section-title">🖥 最近一次執行結果</div>', unsafe_allow_html=True)
+        st.markdown('<div class="section-title">🖥 最近一次手動執行結果</div>', unsafe_allow_html=True)
 
         cls = "ok" if latest_result["code"] == 0 else "fail"
         st.markdown(
@@ -399,11 +618,7 @@ def render_sales_page():
 
     if update_btn:
         with st.spinner("更新資料中…"):
-            result = generate_sales_report(
-                send_email=False,
-                persist_dashboard=True,
-                trigger="dashboard"
-            )
+            result = generate_sales_report(send_email=False, persist_dashboard=True, trigger="dashboard")
 
     if result is not None:
         df4 = result.get("df4", pd.DataFrame())
@@ -420,7 +635,6 @@ def render_sales_page():
         raw_ts = meta.get("updated_at", "") if isinstance(meta, dict) else ""
         updated_at = raw_ts if raw_ts else "尚未產生資料"
         error_msg = meta.get("error") if isinstance(meta, dict) else None
-
         if payload.get("df4_error"):
             st.warning(f"df4.csv 讀取錯誤：{payload['df4_error']}")
         if payload.get("daily_df_error"):
@@ -439,7 +653,6 @@ def render_sales_page():
 
     if error_msg:
         st.error(f"上次執行有錯誤：{error_msg}")
-
     st.info(f"📅 最新更新時間：{updated_at}")
 
     total = None
@@ -456,25 +669,12 @@ def render_sales_page():
 
     st.markdown('<div class="section-card">', unsafe_allow_html=True)
     st.markdown('<div class="section-title">📊 各區月度摘要</div>', unsafe_allow_html=True)
-
     if df4.empty:
-        st.markdown(
-            '<div class="empty-state"><span class="icon">📭</span>目前沒有資料，請先按「更新資料」</div>',
-            unsafe_allow_html=True
-        )
+        st.markdown('<div class="empty-state"><span class="icon">📭</span>目前沒有資料，請先按「更新資料」</div>', unsafe_allow_html=True)
     else:
         int4 = {"本月加總", "次月加總", "本月家電加總", "次月家電加總", "儲值金"}
         pct4 = {"本月佔比", "次月佔比"}
-        st.markdown(
-            render_html_table(
-                df4,
-                right_cols=int4 | pct4,
-                pct_cols=pct4,
-                int_cols=int4
-            ),
-            unsafe_allow_html=True
-        )
-
+        st.markdown(render_html_table(df4, right_cols=int4 | pct4, pct_cols=pct4, int_cols=int4), unsafe_allow_html=True)
     st.markdown("</div>", unsafe_allow_html=True)
 
     st.markdown('<div class="section-card">', unsafe_allow_html=True)
@@ -486,49 +686,22 @@ def render_sales_page():
         f"載入：{len(daily_df)} 行 × {len(daily_df.columns)} 欄"
     ]
     if not daily_df.empty:
-        parts.append(
-            f"欄位：{', '.join(daily_df.columns[:8].tolist())}{'…' if len(daily_df.columns) > 8 else ''}"
-        )
+        parts.append(f"欄位：{', '.join(daily_df.columns[:8].tolist())}{'…' if len(daily_df.columns) > 8 else ''}")
     st.caption("  ·  ".join(parts))
 
     if daily_df.empty:
         reason = "daily_df.csv 不存在，請先按「更新資料」。" if not daily_csv.exists() else "CSV 存在但無資料列。"
-        st.markdown(
-            f'<div class="empty-state"><span class="icon">📭</span>{reason}</div>',
-            unsafe_allow_html=True
-        )
+        st.markdown(f'<div class="empty-state"><span class="icon">📭</span>{reason}</div>', unsafe_allow_html=True)
     else:
-        daily_view_df = daily_df.copy()
-
-        if "日期" in daily_view_df.columns:
-            dt_series = pd.to_datetime(daily_view_df["日期"], errors="coerce")
-
-            if getattr(dt_series.dt, "tz", None) is None:
-                dt_series = dt_series.dt.tz_localize("Asia/Taipei")
-            else:
-                dt_series = dt_series.dt.tz_convert("Asia/Taipei")
-
-            daily_view_df["_sort_dt"] = dt_series
-            daily_view_df["日期"] = dt_series.dt.strftime("%Y/%m/%d %H:%M")
-            daily_view_df = daily_view_df.sort_values(
-                by="_sort_dt",
-                ascending=False,
-                na_position="last"
-            )
-        else:
-            daily_view_df["_sort_dt"] = pd.NaT
-
-        if "id" in daily_view_df.columns:
+        if "id" in daily_df.columns:
             del_ids = st.multiselect(
                 "勾選要刪除的每日業績總覽紀錄",
-                options=daily_view_df["id"].astype(str).tolist(),
+                options=daily_df["id"].astype(str).tolist(),
                 key="del_daily_df_ids"
             )
 
             if st.button("🗑 刪除勾選列", key="del_daily_df_btn", use_container_width=True):
-                keep_df = daily_df[
-                    ~daily_df["id"].astype(str).isin([str(x) for x in del_ids])
-                ].copy()
+                keep_df = daily_df[~daily_df["id"].astype(str).isin([str(x) for x in del_ids])].copy()
                 keep_df.to_csv(daily_csv, index=False, encoding="utf-8-sig")
                 st.success(f"已刪除 {len(daily_df) - len(keep_df)} 筆")
                 st.rerun()
@@ -542,62 +715,20 @@ def render_sales_page():
             "高雄業績", "高雄佔比",
             "全區合計"
         ]
-        show_cols = [c for c in show_cols if c in daily_view_df.columns]
+        show_cols = [c for c in show_cols if c in daily_df.columns]
 
         int_d = {c for c in show_cols if "業績" in c or c == "全區合計"}
         pct_d = {c for c in show_cols if "佔比" in c}
 
-        PAGE_SIZE = 30
-        total_rows = len(daily_view_df)
-        total_pages = max(1, (total_rows - 1) // PAGE_SIZE + 1)
-
-        current_page = st.session_state.get("daily_df_page", 1)
-        current_page = min(max(1, current_page), total_pages)
-        st.session_state["daily_df_page"] = current_page
-
-        start_idx = (current_page - 1) * PAGE_SIZE
-        end_idx = start_idx + PAGE_SIZE
-        page_df = daily_view_df.iloc[start_idx:end_idx].copy()
-
         st.markdown(
             render_html_table(
-                page_df[show_cols].copy(),
+                daily_df[show_cols].copy(),
                 right_cols=int_d | pct_d,
                 pct_cols=pct_d,
                 int_cols=int_d
             ),
             unsafe_allow_html=True
         )
-
-        st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
-
-        p1, p2, p3 = st.columns([1, 2, 1])
-
-        with p1:
-            if st.button("⬅ 上一頁", key="daily_prev_page", use_container_width=True, disabled=(current_page <= 1)):
-                st.session_state["daily_df_page"] = current_page - 1
-                st.rerun()
-
-        with p2:
-            page = st.number_input(
-                "頁數",
-                min_value=1,
-                max_value=total_pages,
-                value=current_page,
-                step=1,
-                key="daily_df_page_input"
-            )
-
-            if int(page) != int(current_page):
-                st.session_state["daily_df_page"] = int(page)
-                st.rerun()
-
-            st.caption(f"第 {current_page} / {total_pages} 頁（每頁 {PAGE_SIZE} 筆，共 {total_rows} 筆）")
-
-        with p3:
-            if st.button("下一頁 ➡", key="daily_next_page", use_container_width=True, disabled=(current_page >= total_pages)):
-                st.session_state["daily_df_page"] = current_page + 1
-                st.rerun()
 
     st.markdown("</div>", unsafe_allow_html=True)
 
@@ -846,16 +977,16 @@ def render_schedule_page():
     st.markdown('<div class="section-title">⏰ 排程說明</div>', unsafe_allow_html=True)
     st.info(
         "雲端版不使用 Mac launchd / plist。\n\n"
-        "自動排程請改由 GitHub Actions workflow 執行，例如：\n"
-        "- 業績報表：每天 08:00（台北）\n"
-        "- 也可在 GitHub Actions 頁面手動 Run workflow"
+        "自動排程由 GitHub Actions 執行：\n"
+        "- Nightly Reports：每天 01:10（台北）\n"
+        "- Performance Report：每天 08:00（台北）\n\n"
+        "主控表最近結果與最近執行時間會直接讀 GitHub Actions。"
     )
     st.code(
-        "GitHub Actions workflow:\n"
-        "on:\n"
-        "  workflow_dispatch:\n"
-        "  schedule:\n"
-        "    - cron: '0 0 * * *'  # 台北 08:00",
+        "Nightly Reports:\n"
+        "  - cron: '10 17 * * *'  # 台北 01:10\n\n"
+        "Performance Report:\n"
+        "  - cron: '0 0 * * *'    # 台北 08:00",
         language="yaml",
     )
     st.markdown("</div>", unsafe_allow_html=True)
