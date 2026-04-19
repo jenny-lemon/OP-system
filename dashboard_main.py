@@ -617,8 +617,12 @@ def render_sales_page():
             st.rerun()
 
     if update_btn:
-    with st.spinner("更新資料中…"):
-        result = generate_sales_report(send_email=False, persist_dashboard=False, trigger="dashboard")
+        with st.spinner("更新資料中…"):
+            result = generate_sales_report(
+                send_email=False,
+                persist_dashboard=False,
+                trigger="dashboard"
+            )
 
     if result is not None:
         df4 = result.get("df4", pd.DataFrame())
