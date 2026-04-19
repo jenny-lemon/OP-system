@@ -941,10 +941,12 @@ def generate_sales_report(send_email=False, persist_dashboard=True, trigger="das
             source = "schedule-08"
         elif hour == 18:
             source = "schedule-18"
-        else:
-            source = "schedule"
+        elif hour == 0:
+            source = "schedule-00"
     else:
-        source = "dashboard"
+        source = "schedule"
+else:
+    source = "dashboard"
 
     daily_df.loc[daily_df.index[-1], "來源"] = source
 
