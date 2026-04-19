@@ -3,10 +3,10 @@ name: Daily Performance Report
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 0 * * *'  # 台北時間每天 08:00（UTC 00:00）
-    - cron: '0 10 * * *'  # 台北 18:00
-    - cron: '0 16 * * *'  # 台北 00:00
-    
+    - cron: '7 0 * * *'    # 台北 08:07
+    - cron: '7 10 * * *'   # 台北 18:07
+    - cron: '15 16 * * *'  # 台北 00:15
+
 jobs:
   run-performance-report:
     runs-on: ubuntu-latest
@@ -25,61 +25,32 @@ jobs:
       KAOHSIUNG_PASSWORD: ${{ secrets.KAOHSIUNG_PASSWORD }}
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v5
+      - uses: actions/checkout@v5
 
-      - name: Set up Python
-        uses: actions/setup-python@v6
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.11'
+
+      - name: Debug trigger time
+        run: |
+          echo "event_name=${{ github.event_name }}"
+          echo "schedule=${{ github.event.schedule }}"
+          echo "UTC:"
+          date -u
+          echo "Taipei:"
+          TZ=Asia/Taipei date
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install pandas requests beautifulsoup4 lxml streamlit
 
-      - name: Debug account env
-        run: |
-          python - <<'PY'
-          import os
-          keys = [
-              "TAIPEI_EMAIL","TAIPEI_PASSWORD",
-              "TAICHUNG_EMAIL","TAICHUNG_PASSWORD",
-              "TAOYUAN_EMAIL","TAOYUAN_PASSWORD",
-              "HSINCHU_EMAIL","HSINCHU_PASSWORD",
-              "KAOHSIUNG_EMAIL","KAOHSIUNG_PASSWORD",
-          ]
-          for k in keys:
-              print(k, "OK" if os.getenv(k) else "MISSING")
-          PY
-
-      - name: Ensure output folders exist
-        run: |
-          python - <<'PY'
-          import os
-          try:
-              from paths import (
-                  PATH_SCHEDULE, PATH_CLEANER_SCHEDULE, PATH_CLEANER_DATA,
-                  PATH_ORDER, PATH_REPORT, PATH_VIP, PATH_HR
-              )
-              for p in [
-                  PATH_SCHEDULE, PATH_CLEANER_SCHEDULE, PATH_CLEANER_DATA,
-                  PATH_ORDER, PATH_REPORT, PATH_VIP, PATH_HR
-              ]:
-                  os.makedirs(p, exist_ok=True)
-          except Exception as e:
-              print(f"skip ensure paths: {e}")
-          PY
-
       - name: Run performance report
-        run: |
-          python performance_report.py schedule true
+        run: python performance_report.py schedule true
 
       - name: Upload generated files
         uses: actions/upload-artifact@v6
         with:
           name: performance-report-output
-          path: |
-            .
+          path: .
           if-no-files-found: warn
-          compression-level: 6
