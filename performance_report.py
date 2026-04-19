@@ -542,7 +542,7 @@ def build_daily_overview_df(df4: pd.DataFrame, source: str = "dashboard") -> pd.
 
     new_row = {
         "id": row_id,
-        "來源": "dashboard",
+        "來源": source,
         "日期": date_text,
         "台北業績": get_val("台北", "本月加總"),
         "台北佔比": get_val("台北", "本月佔比"),
