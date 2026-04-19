@@ -86,7 +86,13 @@ def get_service_account_info():
         except Exception:
             pass
 
+    # 先支援舊名稱
     json_str = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")
+    if json_str:
+        return json.loads(json_str)
+
+    # 🔥 新增：支援你現在用的名稱
+    json_str = os.getenv("GOOGLE_SERVICE_ACCOUNT")
     if json_str:
         return json.loads(json_str)
 
