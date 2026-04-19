@@ -719,15 +719,22 @@ def persist_dashboard_payload(
     latest_html = os.path.join(LATEST_DIR, "email_preview.html")
     latest_meta = os.path.join(LATEST_DIR, "meta.json")
 
-    df4.to_csv(latest_df4, index=False, encoding="utf-8-sig")
-    append_output_file_log("業績報表", latest_df4, trigger)
+    # 🔥🔥🔥 加這段 debug
+    log("===== 寫入 dashboard 檔案 =====")
+    log(f"LATEST_DIR = {LATEST_DIR}")
+    log(f"latest_df4 = {latest_df4}")
+    log(f"latest_daily = {latest_daily}")
+    log(f"latest_html = {latest_html}")
+    log(f"latest_meta = {latest_meta}")
+    log(f"df4 rows = {len(df4)}")
+    log(f"daily_df rows = {len(daily_df)}")
 
+    # ===== 原本寫檔 =====
+    df4.to_csv(latest_df4, index=False, encoding="utf-8-sig")
     daily_df.to_csv(latest_daily, index=False, encoding="utf-8-sig")
-    append_output_file_log("業績報表", latest_daily, trigger)
 
     with open(latest_html, "w", encoding="utf-8") as f:
         f.write(email_html or "")
-    append_output_file_log("業績報表", latest_html, trigger)
 
     meta = {
         "updated_at": now.strftime("%Y-%m-%d %H:%M:%S"),
@@ -737,28 +744,11 @@ def persist_dashboard_payload(
     }
     with open(latest_meta, "w", encoding="utf-8") as f:
         json.dump(meta, f, ensure_ascii=False, indent=2)
-    append_output_file_log("業績報表", latest_meta, trigger)
 
+    # snapshot（保留原本）
     snapshot_prefix = os.path.join(month_folder, stamp)
-
-    snap_df4 = f"{snapshot_prefix}_df4.csv"
-    snap_daily = f"{snapshot_prefix}_daily_df.csv"
-    snap_meta = f"{snapshot_prefix}_meta.json"
-    snap_html = f"{snapshot_prefix}_email_preview.html"
-
-    df4.to_csv(snap_df4, index=False, encoding="utf-8-sig")
-    append_output_file_log("業績報表", snap_df4, trigger)
-
-    daily_df.to_csv(snap_daily, index=False, encoding="utf-8-sig")
-    append_output_file_log("業績報表", snap_daily, trigger)
-
-    with open(snap_meta, "w", encoding="utf-8") as f:
-        json.dump(meta, f, ensure_ascii=False, indent=2)
-    append_output_file_log("業績報表", snap_meta, trigger)
-
-    with open(snap_html, "w", encoding="utf-8") as f:
-        f.write(email_html or "")
-    append_output_file_log("業績報表", snap_html, trigger)
+    df4.to_csv(f"{snapshot_prefix}_df4.csv", index=False, encoding="utf-8-sig")
+    daily_df.to_csv(f"{snapshot_prefix}_daily_df.csv", index=False, encoding="utf-8-sig")
 
 
 def generate_sales_report(send_email=False, persist_dashboard=True, trigger="dashboard"):
