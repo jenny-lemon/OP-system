@@ -96,7 +96,7 @@ MAIN_REPORT_TASKS = [
         "workflow_file": "performance-report.yml",
         "workflow_job_name": "run-performance-report",
         "workflow_step_name": "Run performance report",
-        "schedule_text": "GitHub Actions / 每天 08:00（台北）",
+        "schedule_text": "GitHub Actions / 每天 00:00、08:00、18:00（台北）",
         "cmd": f'cd "{BASE_DIR}" && "{PYTHON_CMD}" performance_report.py dashboard false',
     },
 ]
