@@ -33,88 +33,6 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install pandas requests beautifulsoup4 lxml streamlit google-auth google-auth-oauthlib google-api-python-client
-     
-      - name: Debug Google secret
-        run: |
-           python - <<'PY'
-           import os
-           v = os.getenv("GOOGLE_SERVICE_ACCOUNT")
-           print("GOOGLE_SERVICE_ACCOUNT =", "OK" if v else "MISSING")
-           if v:
-               print("length =", len(v))
-           PY
-    
-      - name: Debug account env
-        run: |
-          python - <<'PY'
-          import os
-          keys = [
-              "TAIPEI_EMAIL","TAIPEI_PASSWORD",
-              "TAICHUNG_EMAIL","TAICHUNG_PASSWORD",
-              "TAOYUAN_EMAIL","TAOYUAN_PASSWORD",
-              "HSINCHU_EMAIL","HSINCHU_PASSWORD",
-              "KAOHSIUNG_EMAIL","KAOHSIUNG_PASSWORD",
-          ]
-          for k in keys:
-              print(k, "OK" if os.getenv(k) else "MISSING")
-          print("GOOGLE_SERVICE_ACCOUNT", "OK" if os.getenv("GOOGLE_SERVICE_ACCOUNT") else "MISSING")
-          PY
-
-      - name: Debug Google secret
-        run: |
-          python - <<'PY'
-          import os
-          v = os.getenv("GOOGLE_SERVICE_ACCOUNT")
-          print("GOOGLE_SERVICE_ACCOUNT =", "OK" if v else "MISSING")
-          if v:
-              print("length =", len(v))
-          PY
-
-      - name: Ensure output folders exist
-        run: |
-          python - <<'PY'
-          import os
-          try:
-              from paths import (
-                  PATH_SCHEDULE, PATH_CLEANER_SCHEDULE, PATH_CLEANER_DATA,
-                  PATH_ORDER, PATH_REPORT, PATH_VIP, PATH_HR
-              )
-              for p in [
-                  PATH_SCHEDULE, PATH_CLEANER_SCHEDULE, PATH_CLEANER_DATA,
-                  PATH_ORDER, PATH_REPORT, PATH_VIP, PATH_HR
-              ]:
-                  os.makedirs(p, exist_ok=True)
-          except Exception as e:
-              print(f"skip ensure paths: {e}")
-          PY
-
-      - name: Run schedule report
-        run: |
-          python schedule_report.py
-
-      - name: Run staff schedule
-        run: |
-          python staff_schedule.py
-
-      - name: Run staff info
-        run: |
-          python staff_info.py
-
-      - name: Run orders report
-        run: |
-          python orders_report.py
-
-      - name: Upload generated files
-        uses: actions/upload-artifact@v6
-        with:
-          name: nightly-reports-output
-          path: .
-          if-no-files-found: warn
-
       - name: Debug trigger
         run: |
           echo "event_name=${{ github.event_name }}"
@@ -123,3 +41,30 @@ jobs:
           date -u
           echo "Taipei:"
           TZ=Asia/Taipei date
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pandas requests beautifulsoup4 lxml streamlit google-auth google-auth-oauthlib google-api-python-client
+
+      - name: Run schedule report
+        run: python schedule_report.py
+
+      - name: Run staff schedule
+        run: python staff_schedule.py
+
+      - name: Run staff info
+        run: python staff_info.py
+
+      - name: Run orders report
+        run: python orders_report.py
+
+      - name: Run performance report
+        run: python performance_report.py schedule true
+
+      - name: Upload generated files
+        uses: actions/upload-artifact@v6
+        with:
+          name: nightly-reports-output
+          path: .
+          if-no-files-found: warn
