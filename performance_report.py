@@ -943,12 +943,13 @@ def generate_sales_report(send_email=False, persist_dashboard=True, trigger="das
             source = "schedule-18"
         elif hour == 0:
             source = "schedule-00"
+        else:
+            source = "schedule"
     else:
-        source = "schedule"
-else:
-    source = "dashboard"
+        source = "dashboard"
 
-    daily_df.loc[daily_df.index[-1], "來源"] = source
+    if not daily_df.empty:
+        daily_df.loc[daily_df.index[-1], "來源"] = source
 
     log(f"raw_df columns = {list(raw_df.columns)}")
     log(f"raw_df 前5筆 = {raw_df.head().to_dict('records')}")
