@@ -681,12 +681,32 @@ def render_sales_page():
     st.markdown('<div class="section-title">📅 當月每日業績總覽</div>', unsafe_allow_html=True)
 
     daily_csv = Path(LATEST_DIR) / "daily_df.csv"
+    # 👇👇👇 加這裡 👇👇👇
+    import os
+
+    st.write("===== DEBUG 檔案來源 =====")
+
+    df4_csv = Path(LATEST_DIR) / "df4.csv"
+
+    st.write("df4 path:", df4_csv)
+    st.write("daily path:", daily_csv)
+
+    if df4_csv.exists():
+        st.write("df4 mtime:", datetime.fromtimestamp(df4_csv.stat().st_mtime))
+    else:
+        st.write("df4 ❌ 不存在")
+
+    if daily_csv.exists():
+        st.write("daily mtime:", datetime.fromtimestamp(daily_csv.stat().st_mtime))
+    else:
+        st.write("daily ❌ 不存在")
+    # 👆👆👆 到這裡 👆👆👆
+        
     parts = [
-        f"daily_df.csv {'存在' if daily_csv.exists() else '⚠️ 不存在'}（{file_size_str(daily_csv)}，{file_mtime(daily_csv)}）",
-        f"載入：{len(daily_df)} 行 × {len(daily_df.columns)} 欄"
+        f"daily_df.csv {'存在' if daily_csv.exists() else '⚠️ 不存在'}（{file_size_str(daily_csv)}，{file_mtime(daily_csv)}）",            f"載入：{len(daily_df)} 行 × {len(daily_df.columns)} 欄"
     ]
     if not daily_df.empty:
-        parts.append(f"欄位：{', '.join(daily_df.columns[:8].tolist())}{'…' if len(daily_df.columns) > 8 else ''}")
+    parts.append(f"欄位：{', '.join(daily_df.columns[:8].tolist())}{'…' if len(daily_df.columns) > 8 else ''}")
     st.caption("  ·  ".join(parts))
 
     if daily_df.empty:
