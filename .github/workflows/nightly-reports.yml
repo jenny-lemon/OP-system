@@ -114,3 +114,12 @@ jobs:
           name: nightly-reports-output
           path: .
           if-no-files-found: warn
+
+      - name: Debug trigger
+        run: |
+          echo "event_name=${{ github.event_name }}"
+          echo "schedule=${{ github.event.schedule }}"
+          echo "UTC:"
+          date -u
+          echo "Taipei:"
+          TZ=Asia/Taipei date
