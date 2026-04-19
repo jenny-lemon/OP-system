@@ -956,7 +956,7 @@ def generate_sales_report(send_email=False, persist_dashboard=True, trigger="das
         source = "dashboard"
 
     if not daily_df.empty:
-        daily_df.loc[daily_df.index[-1], "來源"] = source
+        daily_df.loc[daily_df.index[0], "來源"] = source
 
     log(f"raw_df columns = {list(raw_df.columns)}")
     log(f"raw_df 前5筆 = {raw_df.head().to_dict('records')}")
