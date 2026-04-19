@@ -80,3 +80,11 @@ jobs:
           name: performance-report-output
           path: .
           if-no-files-found: warn
+
+      - name: Commit and push dashboard data
+        run: |
+          git config --global user.name "github-actions"
+          git config --global user.email "actions@github.com"
+          git add dashboard_data/latest/*
+          git commit -m "update dashboard data" || echo "no changes"
+          git push
