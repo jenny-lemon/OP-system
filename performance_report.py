@@ -53,11 +53,10 @@ def log(msg: str):
 
 
 def ensure_dirs():
-    os.makedirs(DASHBOARD_DIR, exist_ok=True)
-    os.makedirs(LATEST_DIR, exist_ok=True)
-    os.makedirs(SNAPSHOT_DIR, exist_ok=True)
-    os.makedirs(EXEC_LOG_DIR, exist_ok=True)
-    os.makedirs(DAILY_HISTORY_DIR, exist_ok=True)
+    for p in [DASHBOARD_DIR, LATEST_DIR, SNAPSHOT_DIR, EXEC_LOG_DIR, DAILY_HISTORY_DIR]:
+        if os.path.exists(p) and not os.path.isdir(p):
+            raise RuntimeError(f"路徑存在但不是資料夾：{p}")
+        os.makedirs(p, exist_ok=True)
 
 
 def login(session, email, password):
