@@ -515,7 +515,7 @@ def build_daily_overview_df(df4: pd.DataFrame, source: str = "dashboard") -> pd.
         return pd.DataFrame(columns=cols)
 
     latest_daily = os.path.join(LATEST_DIR, "daily_df.csv")
-    now_obj = now_dt()   # 這裡 now_dt() 要是台北時區版本
+    now_obj = now_dt()
     row_id = now_obj.strftime("%Y%m%d%H%M%S")
     date_text = now_obj.strftime("%Y/%m/%d %H:%M")
 
@@ -559,14 +559,11 @@ def build_daily_overview_df(df4: pd.DataFrame, source: str = "dashboard") -> pd.
 
     out = pd.concat([old_df[cols], pd.DataFrame([new_row])], ignore_index=True)
 
-    # 只保留台北時間當月資料
     current_prefix = now_obj.strftime("%Y/%m")
     out = out[out["日期"].astype(str).str.startswith(current_prefix)].copy()
 
-    # 轉成 datetime 後排序，最新在最上面
     out["_sort_dt"] = pd.to_datetime(out["日期"], format="%Y/%m/%d %H:%M", errors="coerce")
     out = out.sort_values(["_sort_dt", "id"], ascending=[False, False]).drop(columns=["_sort_dt"])
-
     out = out.reset_index(drop=True)
 
     log(f"✅ build_daily_overview_df 完成，筆數 = {len(out)}")
