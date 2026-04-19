@@ -3,7 +3,7 @@ name: Nightly Reports
 on:
   workflow_dispatch:
   schedule:
-    - cron: '10 17 * * *'  # 台北 01:10
+    - cron: '17 17 * * *'  # 台北 01:10
 
 jobs:
   run-nightly:
@@ -68,3 +68,12 @@ jobs:
           name: nightly-reports-output
           path: .
           if-no-files-found: warn
+
+      - name: Debug trigger
+        run: |
+          echo "event_name=${{ github.event_name }}"
+          echo "schedule=${{ github.event.schedule }}"
+          echo "UTC:"
+          date -u
+          echo "Taipei:"
+          TZ=Asia/Taipei date
