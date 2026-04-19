@@ -778,23 +778,22 @@ def generate_sales_report(send_email=False, persist_dashboard=True, trigger="das
     if not enabled_cities:
         error_msg = "ACCOUNTS 沒有任何可用城市設定"
         log(f"❌ {error_msg}")
+        log("⚠️ 本次不覆蓋 latest，保留舊資料")
 
-        empty_df4 = pd.DataFrame(columns=[
-            "城市", "本月加總", "本月佔比", "次月加總", "次月佔比",
-            "本月家電加總", "次月家電加總", "儲值金"
-        ])
-        empty_daily = pd.DataFrame(columns=[
-            "id", "來源", "日期",
-            "台北業績", "台北佔比",
-            "台中業績", "台中佔比",
-            "桃園業績", "桃園佔比",
-            "新竹業績", "新竹佔比",
-            "高雄業績", "高雄佔比",
-            "全區合計",
-        ])
-
-        if persist_dashboard:
-            persist_dashboard_payload(empty_df4, empty_daily, "", error_msg, trigger=trigger)
+        return {
+            "raw_df": pd.DataFrame(),
+            "df1": pd.DataFrame(),
+            "df2": pd.DataFrame(),
+            "df3": pd.DataFrame(),
+            "df4": pd.DataFrame(),
+            "daily_df": pd.DataFrame(),
+            "email_html": "",
+            "updated_at": now_dt().strftime("%Y-%m-%d %H:%M:%S"),
+            "execution_log_df": pd.DataFrame(),
+            "daily_history_df": pd.DataFrame(),
+            "output_file_log_df": load_output_file_log(),
+            "error": error_msg,
+        }
 
         return {
             "raw_df": pd.DataFrame(),
@@ -894,23 +893,22 @@ def generate_sales_report(send_email=False, persist_dashboard=True, trigger="das
             error_msg += "；" + " / ".join(city_errors)
 
         log(f"⚠️ {error_msg}")
+        log("⚠️ 本次不覆蓋 latest，保留舊資料")
 
-        empty_df4 = pd.DataFrame(columns=[
-            "城市", "本月加總", "本月佔比", "次月加總", "次月佔比",
-            "本月家電加總", "次月家電加總", "儲值金"
-        ])
-        empty_daily = pd.DataFrame(columns=[
-            "id", "來源", "日期",
-            "台北業績", "台北佔比",
-            "台中業績", "台中佔比",
-            "桃園業績", "桃園佔比",
-            "新竹業績", "新竹佔比",
-            "高雄業績", "高雄佔比",
-            "全區合計",
-        ])
-
-        if persist_dashboard:
-            persist_dashboard_payload(empty_df4, empty_daily, "", error_msg, trigger=trigger)
+        return {
+            "raw_df": pd.DataFrame(),
+            "df1": pd.DataFrame(),
+            "df2": pd.DataFrame(),
+            "df3": pd.DataFrame(),
+            "df4": pd.DataFrame(),
+            "daily_df": pd.DataFrame(),
+            "email_html": "",
+            "updated_at": now_dt().strftime("%Y-%m-%d %H:%M:%S"),
+            "execution_log_df": pd.DataFrame(),
+            "daily_history_df": pd.DataFrame(),
+            "output_file_log_df": load_output_file_log(),
+           "error": error_msg,
+        }
 
         return {
             "raw_df": pd.DataFrame(),
