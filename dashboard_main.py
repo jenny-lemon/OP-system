@@ -635,6 +635,7 @@ def render_sales_page():
         raw_ts = meta.get("updated_at", "") if isinstance(meta, dict) else ""
         updated_at = raw_ts if raw_ts else "尚未產生資料"
         error_msg = meta.get("error") if isinstance(meta, dict) else None
+
         if payload.get("df4_error"):
             st.warning(f"df4.csv 讀取錯誤：{payload['df4_error']}")
         if payload.get("daily_df_error"):
@@ -653,6 +654,7 @@ def render_sales_page():
 
     if error_msg:
         st.error(f"上次執行有錯誤：{error_msg}")
+
     st.info(f"📅 最新更新時間：{updated_at}")
 
     total = None
@@ -670,48 +672,57 @@ def render_sales_page():
     st.markdown('<div class="section-card">', unsafe_allow_html=True)
     st.markdown('<div class="section-title">📊 各區月度摘要</div>', unsafe_allow_html=True)
     if df4.empty:
-        st.markdown('<div class="empty-state"><span class="icon">📭</span>目前沒有資料，請先按「更新資料」</div>', unsafe_allow_html=True)
+        st.markdown(
+            '<div class="empty-state"><span class="icon">📭</span>目前沒有資料，請先按「更新資料」</div>',
+            unsafe_allow_html=True
+        )
     else:
         int4 = {"本月加總", "次月加總", "本月家電加總", "次月家電加總", "儲值金"}
         pct4 = {"本月佔比", "次月佔比"}
-        st.markdown(render_html_table(df4, right_cols=int4 | pct4, pct_cols=pct4, int_cols=int4), unsafe_allow_html=True)
+        st.markdown(
+            render_html_table(df4, right_cols=int4 | pct4, pct_cols=pct4, int_cols=int4),
+            unsafe_allow_html=True
+        )
     st.markdown("</div>", unsafe_allow_html=True)
 
     st.markdown('<div class="section-card">', unsafe_allow_html=True)
     st.markdown('<div class="section-title">📅 當月每日業績總覽</div>', unsafe_allow_html=True)
 
+    df4_csv = Path(LATEST_DIR) / "df4.csv"
     daily_csv = Path(LATEST_DIR) / "daily_df.csv"
-    # 👇👇👇 加這裡 👇👇👇
-    import os
 
     st.write("===== DEBUG 檔案來源 =====")
-
-    df4_csv = Path(LATEST_DIR) / "df4.csv"
-
-    st.write("df4 path:", df4_csv)
-    st.write("daily path:", daily_csv)
+    st.write("LATEST_DIR:", LATEST_DIR)
+    st.write("df4 path:", str(df4_csv))
+    st.write("daily path:", str(daily_csv))
 
     if df4_csv.exists():
-        st.write("df4 mtime:", datetime.fromtimestamp(df4_csv.stat().st_mtime))
+        st.write("df4 mtime:", datetime.fromtimestamp(df4_csv.stat().st_mtime, tz=TZ_TAIPEI).strftime("%Y-%m-%d %H:%M:%S"))
     else:
         st.write("df4 ❌ 不存在")
 
     if daily_csv.exists():
-        st.write("daily mtime:", datetime.fromtimestamp(daily_csv.stat().st_mtime))
+        st.write("daily mtime:", datetime.fromtimestamp(daily_csv.stat().st_mtime, tz=TZ_TAIPEI).strftime("%Y-%m-%d %H:%M:%S"))
     else:
         st.write("daily ❌ 不存在")
-    # 👆👆👆 到這裡 👆👆👆
-        
+
     parts = [
-        f"daily_df.csv {'存在' if daily_csv.exists() else '⚠️ 不存在'}（{file_size_str(daily_csv)}，{file_mtime(daily_csv)}）",            f"載入：{len(daily_df)} 行 × {len(daily_df.columns)} 欄"
+        f"daily_df.csv {'存在' if daily_csv.exists() else '⚠️ 不存在'}（{file_size_str(daily_csv)}，{file_mtime(daily_csv)}）",
+        f"載入：{len(daily_df)} 行 × {len(daily_df.columns)} 欄"
     ]
     if not daily_df.empty:
-    parts.append(f"欄位：{', '.join(daily_df.columns[:8].tolist())}{'…' if len(daily_df.columns) > 8 else ''}")
+        parts.append(
+            f"欄位：{', '.join(daily_df.columns[:8].tolist())}{'…' if len(daily_df.columns) > 8 else ''}"
+        )
+
     st.caption("  ·  ".join(parts))
 
     if daily_df.empty:
         reason = "daily_df.csv 不存在，請先按「更新資料」。" if not daily_csv.exists() else "CSV 存在但無資料列。"
-        st.markdown(f'<div class="empty-state"><span class="icon">📭</span>{reason}</div>', unsafe_allow_html=True)
+        st.markdown(
+            f'<div class="empty-state"><span class="icon">📭</span>{reason}</div>',
+            unsafe_allow_html=True
+        )
     else:
         if "id" in daily_df.columns:
             del_ids = st.multiselect(
