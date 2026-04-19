@@ -66,9 +66,13 @@ jobs:
               print(f"skip ensure paths: {e}")
           PY
 
-      - name: Run performance report
+      - name: Trigger app server performance report
+        env:
+          APP_API_TOKEN: ${{ secrets.APP_API_TOKEN }}
         run: |
-          python performance_report.py schedule true
+          curl --fail \
+            -H "X-API-Token: ${APP_API_TOKEN}" \
+            "https://你的主機網址/trigger-performance-report"
 
       - name: Upload generated files
         uses: actions/upload-artifact@v6
