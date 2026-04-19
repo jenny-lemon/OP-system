@@ -695,14 +695,6 @@ def render_sales_page():
     df4_csv = Path(LATEST_DIR) / "df4.csv"
     daily_csv = Path(LATEST_DIR) / "daily_df.csv"
 
-    if daily_csv.exists():
-        st.write(
-            "daily mtime:",
-            datetime.fromtimestamp(daily_csv.stat().st_mtime, tz=TZ_TAIPEI).strftime("%Y-%m-%d %H:%M:%S")
-        )
-    else:
-        st.write("daily ❌ 不存在")
-
     parts = [
         f"daily_df.csv {'存在' if daily_csv.exists() else '⚠️ 不存在'}（{file_size_str(daily_csv)}，{file_mtime(daily_csv)}）",
         f"載入：{len(daily_df)} 行 × {len(daily_df.columns)} 欄"
