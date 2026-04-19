@@ -691,19 +691,6 @@ def render_sales_page():
     df4_csv = Path(LATEST_DIR) / "df4.csv"
     daily_csv = Path(LATEST_DIR) / "daily_df.csv"
 
-    st.write("===== DEBUG 檔案來源 =====")
-    st.write("LATEST_DIR:", LATEST_DIR)
-    st.write("df4 path:", str(df4_csv))
-    st.write("daily path:", str(daily_csv))
-
-    if df4_csv.exists():
-        st.write(
-            "df4 mtime:",
-            datetime.fromtimestamp(df4_csv.stat().st_mtime, tz=TZ_TAIPEI).strftime("%Y-%m-%d %H:%M:%S")
-        )
-    else:
-        st.write("df4 ❌ 不存在")
-
     if daily_csv.exists():
         st.write(
             "daily mtime:",
