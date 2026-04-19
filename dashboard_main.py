@@ -697,12 +697,18 @@ def render_sales_page():
     st.write("daily path:", str(daily_csv))
 
     if df4_csv.exists():
-        st.write("df4 mtime:", datetime.fromtimestamp(df4_csv.stat().st_mtime, tz=TZ_TAIPEI).strftime("%Y-%m-%d %H:%M:%S"))
+        st.write(
+            "df4 mtime:",
+            datetime.fromtimestamp(df4_csv.stat().st_mtime, tz=TZ_TAIPEI).strftime("%Y-%m-%d %H:%M:%S")
+        )
     else:
         st.write("df4 ❌ 不存在")
 
     if daily_csv.exists():
-        st.write("daily mtime:", datetime.fromtimestamp(daily_csv.stat().st_mtime, tz=TZ_TAIPEI).strftime("%Y-%m-%d %H:%M:%S"))
+        st.write(
+            "daily mtime:",
+            datetime.fromtimestamp(daily_csv.stat().st_mtime, tz=TZ_TAIPEI).strftime("%Y-%m-%d %H:%M:%S")
+        )
     else:
         st.write("daily ❌ 不存在")
 
