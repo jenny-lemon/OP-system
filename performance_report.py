@@ -939,9 +939,7 @@ def generate_sales_report(send_email=False, persist_dashboard=True, trigger="das
     df3 = build_region3_df(df2)
     df4 = build_region4_df(df2)
 
-    daily_df = build_daily_overview_df(df4)
-    if not daily_df.empty and "來源" in daily_df.columns:
-        hour = now_dt().hour
+    hour = now_dt().hour
 
     if trigger == "schedule":
         if hour == 8:
@@ -955,8 +953,7 @@ def generate_sales_report(send_email=False, persist_dashboard=True, trigger="das
     else:
         source = "dashboard"
 
-    if not daily_df.empty:
-        daily_df.loc[daily_df.index[0], "來源"] = source
+    daily_df = build_daily_overview_df(df4, source=source)
 
     log(f"raw_df columns = {list(raw_df.columns)}")
     log(f"raw_df 前5筆 = {raw_df.head().to_dict('records')}")
