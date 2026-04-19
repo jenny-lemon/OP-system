@@ -1,15 +1,14 @@
-name: Nightly Reports
+name: Daily Performance Report
 
 on:
   workflow_dispatch:
   schedule:
-    - cron: '10 17 * * *'  # 台北 01:10
+    - cron: '0 0 * * *'  # 台北時間每天 08:00（UTC 00:00）
 
 jobs:
-  run-nightly:
+  run-performance-report:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
-
+    timeout-minutes: 30
     env:
       TZ: Asia/Taipei
       TAIPEI_EMAIL: ${{ secrets.TAIPEI_EMAIL }}
@@ -22,7 +21,6 @@ jobs:
       HSINCHU_PASSWORD: ${{ secrets.HSINCHU_PASSWORD }}
       KAOHSIUNG_EMAIL: ${{ secrets.KAOHSIUNG_EMAIL }}
       KAOHSIUNG_PASSWORD: ${{ secrets.KAOHSIUNG_PASSWORD }}
-      GOOGLE_SERVICE_ACCOUNT: ${{ secrets.GOOGLE_SERVICE_ACCOUNT }}
 
     steps:
       - name: Checkout repository
@@ -36,7 +34,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install pandas requests beautifulsoup4 lxml streamlit google-auth google-auth-oauthlib google-api-python-client
+          pip install pandas requests beautifulsoup4 lxml streamlit
 
       - name: Debug account env
         run: |
@@ -51,7 +49,6 @@ jobs:
           ]
           for k in keys:
               print(k, "OK" if os.getenv(k) else "MISSING")
-          print("GOOGLE_SERVICE_ACCOUNT", "OK" if os.getenv("GOOGLE_SERVICE_ACCOUNT") else "MISSING")
           PY
 
       - name: Ensure output folders exist
@@ -72,25 +69,15 @@ jobs:
               print(f"skip ensure paths: {e}")
           PY
 
-      - name: Run schedule report
+      - name: Run performance report
         run: |
-          python schedule_report.py
-
-      - name: Run staff schedule
-        run: |
-          python staff_schedule.py
-
-      - name: Run staff info
-        run: |
-          python staff_info.py
-
-      - name: Run orders report
-        run: |
-          python orders_report.py
+          python performance_report.py schedule true
 
       - name: Upload generated files
         uses: actions/upload-artifact@v6
         with:
-          name: nightly-reports-output
-          path: .
+          name: performance-report-output
+          path: |
+            .
           if-no-files-found: warn
+          compression-level: 6
