@@ -64,6 +64,16 @@ jobs:
           print("GOOGLE_SERVICE_ACCOUNT", "OK" if os.getenv("GOOGLE_SERVICE_ACCOUNT") else "MISSING")
           PY
 
+      - name: Debug Google secret
+        run: |
+          python - <<'PY'
+          import os
+          v = os.getenv("GOOGLE_SERVICE_ACCOUNT")
+          print("GOOGLE_SERVICE_ACCOUNT =", "OK" if v else "MISSING")
+          if v:
+              print("length =", len(v))
+          PY
+
       - name: Ensure output folders exist
         run: |
           python - <<'PY'
