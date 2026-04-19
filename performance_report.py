@@ -3,7 +3,12 @@ import json
 import calendar
 import smtplib
 from email.mime.text import MIMEText
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
+
+TZ_TAIPEI = timezone(timedelta(hours=8))
+
+def now_dt():
+    return datetime.now(TZ_TAIPEI)
 from typing import Optional
 
 import pandas as pd
