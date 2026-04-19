@@ -497,7 +497,7 @@ def build_region4_df(region2_df: pd.DataFrame) -> pd.DataFrame:
     ]]
 
 
-def build_daily_overview_df(df4: pd.DataFrame) -> pd.DataFrame:
+def build_daily_overview_df(df4: pd.DataFrame, source: str = "dashboard") -> pd.DataFrame:
     cols = [
         "id",
         "來源",
