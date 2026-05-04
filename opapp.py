@@ -425,6 +425,28 @@ def _get_latest_payload_time() -> datetime:
     return datetime.now(TZ_TAIPEI)
 
 
+
+def _get_latest_df4_mtime_ns() -> int:
+    """Return latest df4.csv mtime in nanoseconds.
+
+    This is the update event key. Every time the user presses 更新資料 and
+    df4.csv is overwritten, this value changes, so the monthly tracking tabs
+    can append one current-month row and one next-month row for that exact run.
+    """
+    df4_path = os.path.join(LATEST_DIR, "df4.csv")
+    try:
+        if os.path.exists(df4_path):
+            return int(os.stat(df4_path).st_mtime_ns)
+    except Exception:
+        pass
+    return 0
+
+
+def _dt_from_ns(ns: int) -> datetime:
+    if ns:
+        return datetime.fromtimestamp(ns / 1_000_000_000, TZ_TAIPEI)
+    return datetime.now(TZ_TAIPEI)
+
 def _period_config(period_label: str, dt: datetime):
     if period_label == "次月":
         amount_col = "次月加總"
@@ -438,7 +460,7 @@ def _period_config(period_label: str, dt: datetime):
     return amount_col, ratio_col, stat_month
 
 
-def _build_overview_from_df4(period_label: str, row_dt: datetime | None = None) -> pd.DataFrame:
+def _build_overview_from_df4(period_label: str, row_dt: datetime | None = None, run_key: str | None = None) -> pd.DataFrame:
     """Build one overview row from latest df4.csv using current/next logic."""
     df4 = _read_csv_safe(os.path.join(LATEST_DIR, "df4.csv"))
     cols = [
@@ -460,7 +482,7 @@ def _build_overview_from_df4(period_label: str, row_dt: datetime | None = None) 
         return row.iloc[0][col]
 
     row = {
-        "id": f"{row_dt.strftime('%Y%m%d%H%M%S')}_{period_label}",
+        "id": f"{run_key or row_dt.strftime('%Y%m%d%H%M%S%f')}_{period_label}",
         "來源": "dashboard",
         "統計月份": stat_month,
         "日期": row_dt.strftime("%Y/%m/%d %H:%M"),
@@ -480,57 +502,63 @@ def _build_overview_from_df4(period_label: str, row_dt: datetime | None = None) 
 
 
 def _sync_period_csv_from_df4(path: str, period_label: str) -> pd.DataFrame:
-    """Ensure current and next monthly tracking files both contain the latest run.
+    """Append the latest df4 run into the requested monthly tracking CSV.
 
-    Previous versions only repaired the next-month file when it was missing.
-    That is why the next tab got an 11:34 row while the current tab stayed at
-    01:09. This function repairs both files using the same latest df4/meta run.
+    No backup/fallback label, no overwriting, no deleting old rows.
+    The event key is df4.csv mtime_ns, so every completed 更新資料 click creates
+    a new row for 本月 and a new row for 次月. If the same run is rendered again,
+    the same id is detected and not duplicated.
     """
-    row_dt = _get_latest_payload_time()
-    fallback_df = _build_overview_from_df4(period_label, row_dt=row_dt)
-    if fallback_df.empty:
+    ns = _get_latest_df4_mtime_ns()
+    row_dt = _dt_from_ns(ns)
+    run_key = str(ns) if ns else row_dt.strftime('%Y%m%d%H%M%S%f')
+    new_df = _build_overview_from_df4(period_label, row_dt=row_dt, run_key=run_key)
+    if new_df.empty:
         return _read_csv_safe(path)
 
     amount_cols = ["台北業績", "台中業績", "桃園業績", "新竹業績", "高雄業績", "全區合計"]
-    # If df4 has not been produced yet, avoid writing a meaningless all-zero row.
-    if all(pd.to_numeric(fallback_df[c], errors="coerce").fillna(0).iloc[0] == 0 for c in amount_cols):
-        existing = _read_csv_safe(path)
-        return existing if not existing.empty else fallback_df
+    if all(pd.to_numeric(new_df[c], errors="coerce").fillna(0).iloc[0] == 0 for c in amount_cols):
+        return _read_csv_safe(path)
 
-    new_id = str(fallback_df.iloc[0]["id"])
-    stat_month = str(fallback_df.iloc[0]["統計月份"])
-    df = _read_csv_safe(path)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    old_df = _read_csv_safe(path)
 
-    if df.empty:
-        out = fallback_df.copy()
+    if old_df.empty:
+        out = new_df.copy()
     else:
-        for c in fallback_df.columns:
-            if c not in df.columns:
-                df[c] = ""
-        df = df[fallback_df.columns].copy()
-        if "id" in df.columns and new_id in df["id"].astype(str).tolist():
-            out = df
+        for c in new_df.columns:
+            if c not in old_df.columns:
+                old_df[c] = ""
+        old_df = old_df[new_df.columns].copy()
+        new_id = str(new_df.iloc[0]["id"])
+        already_written = False
+        if "id" in old_df.columns and new_id in old_df["id"].astype(str).tolist():
+            already_written = True
+
+        # If performance_report.py already appended this exact update, do not
+        # create a duplicate UI-sync row. Compare timestamp within 2 seconds
+        # and the same total amount.
+        if not already_written and "日期" in old_df.columns and "全區合計" in old_df.columns:
+            old_dates = pd.to_datetime(old_df["日期"], errors="coerce")
+            new_date = pd.to_datetime(str(new_df.iloc[0]["日期"]), errors="coerce")
+            old_total = pd.to_numeric(old_df["全區合計"], errors="coerce").fillna(-1)
+            new_total = pd.to_numeric(pd.Series([new_df.iloc[0]["全區合計"]]), errors="coerce").fillna(-2).iloc[0]
+            if pd.notna(new_date):
+                close_time = (old_dates - new_date).abs() <= pd.Timedelta(seconds=2)
+                same_total = old_total == new_total
+                already_written = bool((close_time & same_total).any())
+
+        if already_written:
+            out = old_df
         else:
-            out = pd.concat([df, fallback_df], ignore_index=True)
+            out = pd.concat([new_df, old_df], ignore_index=True)
 
-    # 保留既有歷史資料，不因舊資料缺少「統計月份」欄位而被清掉。
-    # 只負責把最新一次更新補進來；刪除只透過使用者勾選按鈕。
-    if "日期" in out.columns:
-        out["_sort_dt"] = pd.to_datetime(out["日期"], format="%Y/%m/%d %H:%M", errors="coerce")
-        out = out.sort_values(["_sort_dt", "id"], ascending=[False, False]).drop(columns=["_sort_dt"])
-
-    try:
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        out.to_csv(path, index=False, encoding="utf-8-sig")
-    except Exception:
-        pass
-
+    out.to_csv(path, index=False, encoding="utf-8-sig")
     return out.reset_index(drop=True)
 
 def _show_period_section(title: str, filename: str, period_label: str):
-    # 這裡只顯示 performance_report.py 寫出的正式歷史檔，不在畫面端自行補寫資料。
-    # 按「更新資料」時，performance_report.py 會同時 append 本月與次月各一列。
     path = os.path.join(LATEST_DIR, filename)
+    _sync_period_csv_from_df4(path, period_label)
     _show_deletable_csv_section(
         title=title,
         path=path,
