@@ -342,15 +342,58 @@ def _format_report_df(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def _show_csv_section(title: str, path: str, empty_msg: str):
+def _delete_rows_from_csv(path: str, selected_ids) -> bool:
+    if not selected_ids or not os.path.exists(path):
+        return False
+
+    df = _read_csv_safe(path)
+    if df.empty or "id" not in df.columns:
+        return False
+
+    before = len(df)
+    df = df[~df["id"].astype(str).isin([str(x) for x in selected_ids])].copy()
+    if len(df) == before:
+        return False
+
+    df.to_csv(path, index=False, encoding="utf-8-sig")
+    return True
+
+
+def _show_deletable_csv_section(title: str, path: str, empty_msg: str, key_prefix: str, fallback_df: pd.DataFrame | None = None, source_note: str | None = None):
     st.markdown(f"### {title}")
     df = _read_csv_safe(path)
+    if df.empty and fallback_df is not None and not fallback_df.empty:
+        df = fallback_df
+        source_note = source_note or "來源：latest df4 即時計算"
+    else:
+        source_note = source_note or f"來源：{path}"
+
     if df.empty:
         st.info(empty_msg)
         st.caption(f"目前找不到檔案：{path}")
         return
-    st.caption(f"來源：{path} · 載入：{len(df)} 筆 x {len(df.columns)} 欄")
+
+    st.caption(f"{source_note} · 載入：{len(df)} 筆 x {len(df.columns)} 欄")
+
+    if "id" in df.columns and os.path.exists(path):
+        options = df["id"].astype(str).tolist()
+        selected = st.multiselect(
+            "勾選要刪除的紀錄",
+            options=options,
+            key=f"{key_prefix}_delete_ids",
+        )
+        if st.button("🗑️ 刪除勾選列", key=f"{key_prefix}_delete_btn", use_container_width=True):
+            if _delete_rows_from_csv(path, selected):
+                st.success(f"已刪除 {len(selected)} 筆紀錄")
+                st.rerun()
+            else:
+                st.warning("沒有刪除任何資料，請先勾選紀錄。")
+
     st.dataframe(_format_report_df(df), use_container_width=True, hide_index=True)
+
+
+def _show_csv_section(title: str, path: str, empty_msg: str):
+    _show_deletable_csv_section(title, path, empty_msg, key_prefix=title.replace(" ", "_"))
 
 
 def _build_overview_from_df4(period_label: str) -> pd.DataFrame:
@@ -403,25 +446,19 @@ def _build_overview_from_df4(period_label: str) -> pd.DataFrame:
 
 
 def _show_period_section(title: str, filename: str, period_label: str):
-    st.markdown(f"### {title}")
     path = os.path.join(LATEST_DIR, filename)
-    df = _read_csv_safe(path)
-    source_note = f"來源：{path}"
-
-    if df.empty:
-        df = _build_overview_from_df4(period_label)
-        source_note = f"來源：latest df4 即時計算（未找到 {path}）"
-
-    if df.empty:
-        st.info("目前沒有資料。請先按『更新資料』，並確認 performance_report.py 已重新部署。")
-        return
-
-    st.caption(f"{source_note} · 載入：{len(df)} 筆 x {len(df.columns)} 欄")
-    st.dataframe(_format_report_df(df), use_container_width=True, hide_index=True)
+    fallback_df = _build_overview_from_df4(period_label)
+    _show_deletable_csv_section(
+        title=title,
+        path=path,
+        empty_msg="目前沒有資料。請先按『更新資料』，並確認 performance_report.py 已重新部署。",
+        key_prefix=f"period_{period_label}",
+        fallback_df=fallback_df,
+        source_note=None,
+    )
 
 
 def _show_month_end_snapshot_tab():
-    st.markdown("### 月底快照")
     latest_path = os.path.join(LATEST_DIR, "month_end_summary.csv")
     history_path = os.path.join(DAILY_HISTORY_DIR, "month_end_summary.csv")
 
@@ -434,22 +471,27 @@ def _show_month_end_snapshot_tab():
         return
 
     if not latest_df.empty:
-        st.caption(f"最近一次快照：{latest_path} · 載入：{len(latest_df)} 筆 x {len(latest_df.columns)} 欄")
-        st.dataframe(_format_report_df(latest_df), use_container_width=True, hide_index=True)
+        _show_deletable_csv_section(
+            "最近一次月底快照",
+            latest_path,
+            "目前 latest 裡還沒有月底快照檔。",
+            key_prefix="month_end_latest",
+        )
 
     if not history_df.empty:
-        st.markdown("### 快照歷史")
-        st.caption(f"來源：{history_path} · 載入：{len(history_df)} 筆 x {len(history_df.columns)} 欄")
-        st.dataframe(_format_report_df(history_df), use_container_width=True, hide_index=True)
+        _show_deletable_csv_section(
+            "月底快照歷史",
+            history_path,
+            "目前還沒有月底快照歷史。",
+            key_prefix="month_end_history",
+        )
 
 
 def render_monthly_tracking_tabs():
+    # dashboard_main 已經有「當月每日業績總覽」與刪除功能，這裡只補上次月與月底快照，避免畫面重複。
     st.markdown("---")
-    st.markdown('<div class="page-header"><div class="page-title">月度追蹤</div><div class="page-subtitle">CURRENT / NEXT MONTH / SNAPSHOT</div></div>', unsafe_allow_html=True)
-    tab_current, tab_next, tab_snapshot = st.tabs(["當月每日業績", "次月每日業績", "月底快照"])
-
-    with tab_current:
-        _show_period_section("當月每日業績總覽", "daily_df.csv", "本月")
+    st.markdown("### 月度追蹤")
+    tab_next, tab_snapshot = st.tabs(["次月每日業績", "月底快照"])
 
     with tab_next:
         _show_period_section("次月每日業績總覽", "next_month_daily_df.csv", "次月")
