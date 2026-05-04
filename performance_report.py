@@ -583,6 +583,9 @@ def _build_period_overview_df(
         "全區合計": get_val("加總", amount_col),
     }
 
+    # 當月/次月追蹤採「一直保留」策略：
+    # 每次更新會把上方各區月度摘要 df4 的本月/次月數字各新增一筆；
+    # 舊紀錄不會因月初換月被清空，除非在 OP app 畫面勾選刪除。
     out = pd.concat([old_df[cols], pd.DataFrame([new_row])], ignore_index=True)
 
     # 保留既有歷史資料，不因舊資料缺少「統計月份」欄位而被清掉。
@@ -627,6 +630,8 @@ def build_month_end_summary_df(df4: pd.DataFrame, source: str = "dashboard") -> 
 
     now_obj = now_dt()
     month_last_day = calendar.monthrange(now_obj.year, now_obj.month)[1]
+    # 月底快照：只在每月最後一天「執行更新資料/排程更新」時產生。
+    # 若當天更新多次，會以快照日期覆蓋同一天的舊快照，避免月底快照重複。
     if now_obj.day != month_last_day:
         return pd.DataFrame(columns=cols)
 
@@ -856,11 +861,8 @@ def persist_dashboard_payload(
     log(f"df4 rows = {len(df4)}")
 
     # IMPORTANT: 每次 generate_sales_report() 被執行，都必須 append 本月與次月各一列。
-    # 不在這裡做任何去重、不用舊 id 判斷、不用畫面端 fallback。
-    # 這樣同一分鐘內連按兩次「更新資料」也會留下兩次紀錄。
-    persist_run_dt = now_dt()
-    daily_df = build_daily_overview_df(df4, source=trigger if trigger != "dashboard" else "dashboard", run_dt=persist_run_dt)
-    next_month_daily_df = build_next_month_overview_df(df4, source=trigger if trigger != "dashboard" else "dashboard", run_dt=persist_run_dt)
+    # 這裡使用 generate_sales_report() 已經依照上方摘要 df4 建好的 daily_df / next_month_daily_df，
+    # 不再第二次重算，避免同一次更新出現兩種時間戳或畫面端再補寫造成不同步。
 
     log(f"daily_df rows = {len(daily_df)}")
     log(f"next_month_daily_df rows = {len(next_month_daily_df)}")
