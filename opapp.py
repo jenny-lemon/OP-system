@@ -26,6 +26,10 @@ TOP_PAGES = [
 if "page" not in st.session_state:
     st.session_state.page = "主控表"
 
+_VALID_PAGES = [label for label, _icon in TOP_PAGES]
+if st.session_state.page not in _VALID_PAGES:
+    st.session_state.page = "業績報表"
+
 # ── Global CSS ────────────────────────────────────────────────────────────────
 st.markdown("""
 <style>
@@ -52,10 +56,10 @@ html, body,
     position: sticky; top: 0; z-index: 999;
     box-shadow: 0 1px 8px rgba(15,23,42,.06);
 }
-.topbar-inner { display: flex; align-items: center; height: 52px; }
+.topbar-inner { display: flex; align-items: center; height: 64px; }
 .topbar-brand { display: flex; align-items: center; gap: 9px; flex-shrink: 0; }
-.topbar-logo  { font-size: 20px; line-height: 1; }
-.topbar-name  { font-size: 14px; font-weight: 700; color: #0f172a; letter-spacing: -.01em; white-space: nowrap; }
+.topbar-logo  { font-size: 26px; line-height: 1; }
+.topbar-name  { font-size: 20px; font-weight: 700; color: #0f172a; letter-spacing: -.01em; white-space: nowrap; }
 .topbar-sep   { width: 1px; height: 20px; background: #dde2e8; margin: 0 18px; flex-shrink: 0; }
 .topbar-clock { font-size: 12px; color: #64748b; font-weight: 500; margin-left: auto; font-variant-numeric: tabular-nums; }
 
@@ -71,15 +75,15 @@ html, body,
 html body .nav-wrap div[data-testid="stButton"] > button,
 html body .nav-wrap div[data-testid="stButton"] > button:focus,
 html body .nav-wrap div[data-testid="stButton"] > button:active {
-    height: 40px !important;
-    padding: 0 14px !important;
+    height: 46px !important;
+    padding: 0 16px !important;
     border-radius: 0 !important;
     border: none !important;
     border-bottom: 2px solid transparent !important;
     background: transparent !important;
     color: #64748b !important;
     font-weight: 600 !important;
-    font-size: 12px !important;
+    font-size: 14px !important;
     box-shadow: none !important;
     white-space: nowrap !important;
     letter-spacing: 0 !important;
@@ -102,8 +106,8 @@ html body .nav-wrap.active div[data-testid="stButton"] > button {
     margin-bottom: 22px;
     display: flex; align-items: flex-end; gap: 12px;
 }
-.page-title    { font-size: 22px; font-weight: 700; color: #0f172a; line-height: 1; letter-spacing: -.02em; }
-.page-subtitle { font-size: 10px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; color: #94a3b8; padding-bottom: 1px; }
+.page-title    { font-size: 34px; font-weight: 700; color: #0f172a; line-height: 1; letter-spacing: -.02em; }
+.page-subtitle { font-size: 14px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; color: #94a3b8; padding-bottom: 1px; }
 
 /* ─── KPI cards ─── */
 .kpi-row { display: flex; gap: 12px; margin-bottom: 22px; }
@@ -268,7 +272,7 @@ div[data-testid="stDataFrame"] { border-radius: 9px !important; overflow: hidden
 div[data-testid="stAlert"] { border-radius: 9px !important; font-size: 13px !important; font-weight: 500 !important; }
 .stCaption, div[data-testid="stCaption"] { color: #64748b !important; font-size: 11.5px !important; font-weight: 500 !important; }
 div[data-testid="stCheckbox"] label { color: #374151 !important; font-size: 13px !important; font-weight: 500 !important; }
-h3 { color: #0f172a !important; font-size: 15px !important; font-weight: 700 !important; }
+h3 { color: #0f172a !important; font-size: 22px !important; font-weight: 700 !important; }
 
 /* ─── Footer ─── */
 .footer-cap {
@@ -349,47 +353,117 @@ def _show_csv_section(title: str, path: str, empty_msg: str):
     st.dataframe(_format_report_df(df), use_container_width=True, hide_index=True)
 
 
-def render_next_month_report_page():
-    st.markdown('<div class="page-header"><div class="page-title">次月統計報表</div><div class="page-subtitle">NEXT MONTH DAILY OVERVIEW</div></div>', unsafe_allow_html=True)
-    _show_csv_section(
-        "📈 次月每日業績總覽",
-        os.path.join(LATEST_DIR, "next_month_daily_df.csv"),
-        "還沒有次月統計資料。請先到「業績報表」按「更新資料」，或確認 performance_report.py 已重新部署。",
-    )
+def _build_overview_from_df4(period_label: str) -> pd.DataFrame:
+    """Fallback: if daily csv is missing, build the overview directly from latest df4.csv."""
+    df4 = _read_csv_safe(os.path.join(LATEST_DIR, "df4.csv"))
+    cols = [
+        "id", "來源", "統計月份", "日期",
+        "台北業績", "台北佔比", "台中業績", "台中佔比",
+        "桃園業績", "桃園佔比", "新竹業績", "新竹佔比",
+        "高雄業績", "高雄佔比", "全區合計",
+    ]
+    if df4.empty:
+        return pd.DataFrame(columns=cols)
+
+    now_obj = datetime.now(TZ_TAIPEI)
+    if period_label == "次月":
+        amount_col = "次月加總"
+        ratio_col = "次月佔比"
+        y, m = now_obj.year, now_obj.month
+        stat_month = f"{y + 1}/01" if m == 12 else f"{y}/{m + 1:02d}"
+    else:
+        amount_col = "本月加總"
+        ratio_col = "本月佔比"
+        stat_month = now_obj.strftime("%Y/%m")
+
+    def get_val(city: str, col: str):
+        row = df4[df4["城市"].astype(str) == city]
+        if row.empty or col not in row.columns:
+            return 0
+        return row.iloc[0][col]
+
+    row = {
+        "id": f"{now_obj.strftime('%Y%m%d%H%M%S')}_{period_label}_fallback",
+        "來源": "latest-df4",
+        "統計月份": stat_month,
+        "日期": now_obj.strftime("%Y/%m/%d %H:%M"),
+        "台北業績": get_val("台北", amount_col),
+        "台北佔比": get_val("台北", ratio_col),
+        "台中業績": get_val("台中", amount_col),
+        "台中佔比": get_val("台中", ratio_col),
+        "桃園業績": get_val("桃園", amount_col),
+        "桃園佔比": get_val("桃園", ratio_col),
+        "新竹業績": get_val("新竹", amount_col),
+        "新竹佔比": get_val("新竹", ratio_col),
+        "高雄業績": get_val("高雄", amount_col),
+        "高雄佔比": get_val("高雄", ratio_col),
+        "全區合計": get_val("加總", amount_col),
+    }
+    return pd.DataFrame([row], columns=cols)
 
 
-def render_month_end_snapshot_page():
-    st.markdown('<div class="page-header"><div class="page-title">月底快照</div><div class="page-subtitle">MONTH END SNAPSHOT</div></div>', unsafe_allow_html=True)
-    _show_csv_section(
-        "📌 月底快照歷史",
-        os.path.join(DAILY_HISTORY_DIR, "month_end_summary.csv"),
-        "目前還沒有月底快照。快照只會在每個月最後一天更新資料時寫入。",
-    )
-    _show_csv_section(
-        "📌 最近一次月底快照",
-        os.path.join(LATEST_DIR, "month_end_summary.csv"),
-        "目前 latest 裡還沒有月底快照檔。",
-    )
+def _show_period_section(title: str, filename: str, period_label: str):
+    st.markdown(f"### {title}")
+    path = os.path.join(LATEST_DIR, filename)
+    df = _read_csv_safe(path)
+    source_note = f"來源：{path}"
+
+    if df.empty:
+        df = _build_overview_from_df4(period_label)
+        source_note = f"來源：latest df4 即時計算（未找到 {path}）"
+
+    if df.empty:
+        st.info("目前沒有資料。請先按『更新資料』，並確認 performance_report.py 已重新部署。")
+        return
+
+    st.caption(f"{source_note} · 載入：{len(df)} 筆 x {len(df.columns)} 欄")
+    st.dataframe(_format_report_df(df), use_container_width=True, hide_index=True)
+
+
+def _show_month_end_snapshot_tab():
+    st.markdown("### 月底快照")
+    latest_path = os.path.join(LATEST_DIR, "month_end_summary.csv")
+    history_path = os.path.join(DAILY_HISTORY_DIR, "month_end_summary.csv")
+
+    latest_df = _read_csv_safe(latest_path)
+    history_df = _read_csv_safe(history_path)
+
+    if latest_df.empty and history_df.empty:
+        st.info("目前還沒有月底快照。系統會在每月最後一天更新資料時，記錄當月與次月各區業績及總業績。")
+        st.caption(f"目前找不到檔案：{latest_path} 或 {history_path}")
+        return
+
+    if not latest_df.empty:
+        st.caption(f"最近一次快照：{latest_path} · 載入：{len(latest_df)} 筆 x {len(latest_df.columns)} 欄")
+        st.dataframe(_format_report_df(latest_df), use_container_width=True, hide_index=True)
+
+    if not history_df.empty:
+        st.markdown("### 快照歷史")
+        st.caption(f"來源：{history_path} · 載入：{len(history_df)} 筆 x {len(history_df.columns)} 欄")
+        st.dataframe(_format_report_df(history_df), use_container_width=True, hide_index=True)
+
+
+def render_monthly_tracking_tabs():
+    st.markdown("---")
+    st.markdown('<div class="page-header"><div class="page-title">月度追蹤</div><div class="page-subtitle">CURRENT / NEXT MONTH / SNAPSHOT</div></div>', unsafe_allow_html=True)
+    tab_current, tab_next, tab_snapshot = st.tabs(["當月每日業績", "次月每日業績", "月底快照"])
+
+    with tab_current:
+        _show_period_section("當月每日業績總覽", "daily_df.csv", "本月")
+
+    with tab_next:
+        _show_period_section("次月每日業績總覽", "next_month_daily_df.csv", "次月")
+
+    with tab_snapshot:
+        _show_month_end_snapshot_tab()
 
 
 def render_performance_report_page():
-    # 保留原本 dashboard_main 的業績報表畫面。
     render_page("業績報表")
-
-    # 實務上常會直接停在「業績報表」頁，所以把次月與月底快照
-    # 直接接在同一頁下方，不需要另外找頁籤才看得到。
-    st.markdown("---")
-    render_next_month_report_page()
-
-    st.markdown("---")
-    render_month_end_snapshot_page()
+    render_monthly_tracking_tabs()
 
 
 if st.session_state.page == "業績報表":
     render_performance_report_page()
-elif st.session_state.page == "次月統計報表":
-    render_next_month_report_page()
-elif st.session_state.page == "月底快照":
-    render_month_end_snapshot_page()
 else:
     render_page(st.session_state.page)
