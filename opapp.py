@@ -1,4 +1,5 @@
 import os
+import json
 import pandas as pd
 import streamlit as st
 from datetime import datetime, timedelta, timezone
@@ -395,8 +396,49 @@ def _show_csv_section(title: str, path: str, empty_msg: str):
     _show_deletable_csv_section(title, path, empty_msg, key_prefix=title.replace(" ", "_"))
 
 
-def _build_overview_from_df4(period_label: str) -> pd.DataFrame:
-    """Fallback: if daily csv is missing, build the overview directly from latest df4.csv."""
+def _get_latest_payload_time() -> datetime:
+    """Use the report update time as the row timestamp.
+
+    This prevents adding a new row just because the user switches tabs, while
+    still letting the monthly-tracking tabs repair missing daily/next rows when
+    an older deployment failed to write them.
+    """
+    meta_path = os.path.join(LATEST_DIR, "meta.json")
+    try:
+        if os.path.exists(meta_path):
+            with open(meta_path, "r", encoding="utf-8") as f:
+                meta = json.load(f)
+            updated_at = str(meta.get("updated_at") or "").strip()
+            if updated_at:
+                return datetime.strptime(updated_at, "%Y-%m-%d %H:%M:%S").replace(tzinfo=TZ_TAIPEI)
+    except Exception:
+        pass
+
+    df4_path = os.path.join(LATEST_DIR, "df4.csv")
+    try:
+        if os.path.exists(df4_path):
+            return datetime.fromtimestamp(os.path.getmtime(df4_path), TZ_TAIPEI)
+    except Exception:
+        pass
+
+    return datetime.now(TZ_TAIPEI)
+
+
+def _period_config(period_label: str, dt: datetime):
+    if period_label == "次月":
+        amount_col = "次月加總"
+        ratio_col = "次月佔比"
+        y, m = dt.year, dt.month
+        stat_month = f"{y + 1}/01" if m == 12 else f"{y}/{m + 1:02d}"
+    else:
+        amount_col = "本月加總"
+        ratio_col = "本月佔比"
+        stat_month = dt.strftime("%Y/%m")
+    return amount_col, ratio_col, stat_month
+
+
+def _build_overview_from_df4(period_label: str, row_dt: datetime | None = None) -> pd.DataFrame:
+    """Build one overview row from latest df4.csv using current/next logic."""
     df4 = _read_csv_safe(os.path.join(LATEST_DIR, "df4.csv"))
     cols = [
         "id", "來源", "統計月份", "日期",
@@ -407,28 +449,20 @@ def _build_overview_from_df4(period_label: str) -> pd.DataFrame:
     if df4.empty:
         return pd.DataFrame(columns=cols)
 
-    now_obj = datetime.now(TZ_TAIPEI)
-    if period_label == "次月":
-        amount_col = "次月加總"
-        ratio_col = "次月佔比"
-        y, m = now_obj.year, now_obj.month
-        stat_month = f"{y + 1}/01" if m == 12 else f"{y}/{m + 1:02d}"
-    else:
-        amount_col = "本月加總"
-        ratio_col = "本月佔比"
-        stat_month = now_obj.strftime("%Y/%m")
+    row_dt = row_dt or _get_latest_payload_time()
+    amount_col, ratio_col, stat_month = _period_config(period_label, row_dt)
 
     def get_val(city: str, col: str):
         row = df4[df4["城市"].astype(str) == city]
-        if row.empty or col not in row.columns:
+        if row.empty or col not in df4.columns:
             return 0
         return row.iloc[0][col]
 
     row = {
-        "id": f"{now_obj.strftime('%Y%m%d%H%M%S')}_{period_label}",
+        "id": f"{row_dt.strftime('%Y%m%d%H%M%S')}_{period_label}",
         "來源": "dashboard",
         "統計月份": stat_month,
-        "日期": now_obj.strftime("%Y/%m/%d %H:%M"),
+        "日期": row_dt.strftime("%Y/%m/%d %H:%M"),
         "台北業績": get_val("台北", amount_col),
         "台北佔比": get_val("台北", ratio_col),
         "台中業績": get_val("台中", amount_col),
@@ -444,15 +478,63 @@ def _build_overview_from_df4(period_label: str) -> pd.DataFrame:
     return pd.DataFrame([row], columns=cols)
 
 
+def _sync_period_csv_from_df4(path: str, period_label: str) -> pd.DataFrame:
+    """Ensure current and next monthly tracking files both contain the latest run.
+
+    Previous versions only repaired the next-month file when it was missing.
+    That is why the next tab got an 11:34 row while the current tab stayed at
+    01:09. This function repairs both files using the same latest df4/meta run.
+    """
+    row_dt = _get_latest_payload_time()
+    fallback_df = _build_overview_from_df4(period_label, row_dt=row_dt)
+    if fallback_df.empty:
+        return _read_csv_safe(path)
+
+    amount_cols = ["台北業績", "台中業績", "桃園業績", "新竹業績", "高雄業績", "全區合計"]
+    # If df4 has not been produced yet, avoid writing a meaningless all-zero row.
+    if all(pd.to_numeric(fallback_df[c], errors="coerce").fillna(0).iloc[0] == 0 for c in amount_cols):
+        existing = _read_csv_safe(path)
+        return existing if not existing.empty else fallback_df
+
+    new_id = str(fallback_df.iloc[0]["id"])
+    stat_month = str(fallback_df.iloc[0]["統計月份"])
+    df = _read_csv_safe(path)
+
+    if df.empty:
+        out = fallback_df.copy()
+    else:
+        for c in fallback_df.columns:
+            if c not in df.columns:
+                df[c] = ""
+        df = df[fallback_df.columns].copy()
+        if "id" in df.columns and new_id in df["id"].astype(str).tolist():
+            out = df
+        else:
+            out = pd.concat([df, fallback_df], ignore_index=True)
+
+    if "統計月份" in out.columns:
+        out = out[out["統計月份"].astype(str) == stat_month].copy()
+    if "日期" in out.columns:
+        out["_sort_dt"] = pd.to_datetime(out["日期"], format="%Y/%m/%d %H:%M", errors="coerce")
+        out = out.sort_values(["_sort_dt", "id"], ascending=[False, False]).drop(columns=["_sort_dt"])
+
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        out.to_csv(path, index=False, encoding="utf-8-sig")
+    except Exception:
+        pass
+
+    return out.reset_index(drop=True)
+
 def _show_period_section(title: str, filename: str, period_label: str):
     path = os.path.join(LATEST_DIR, filename)
-    fallback_df = _build_overview_from_df4(period_label)
+    synced_df = _sync_period_csv_from_df4(path, period_label)
     _show_deletable_csv_section(
         title=title,
         path=path,
         empty_msg="目前沒有資料。請先按『更新資料』，並確認 performance_report.py 已重新部署。",
         key_prefix=f"period_{period_label}",
-        fallback_df=fallback_df,
+        fallback_df=synced_df,
         source_note=None,
     )
 
