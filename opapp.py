@@ -2,6 +2,7 @@ import os
 import json
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components
 from datetime import datetime, timedelta, timezone
 from dashboard_main import render_page
 
@@ -390,20 +391,12 @@ def _show_csv_section(title: str, path: str, empty_msg: str):
 
 
 def _get_latest_payload_time() -> datetime:
-    """Use df4.csv modified time as the actual update timestamp.
+    """Return the update time shown by the dashboard.
 
-    The monthly tracking rows are generated from latest/df4.csv. Therefore the
-    safest timestamp is the df4 file mtime, not meta.json. Some deployments can
-    leave meta.json stale; when that happened, the app kept trying to use the
-    old 11:34 id and did not add a new 12:00 row.
+    Prefer latest/meta.json updated_at so the monthly-tracking row uses the
+    same timestamp as the blue "最新更新時間" banner. Fall back to df4.csv
+    mtime when meta.json is unavailable.
     """
-    df4_path = os.path.join(LATEST_DIR, "df4.csv")
-    try:
-        if os.path.exists(df4_path):
-            return datetime.fromtimestamp(os.path.getmtime(df4_path), TZ_TAIPEI)
-    except Exception:
-        pass
-
     meta_path = os.path.join(LATEST_DIR, "meta.json")
     try:
         if os.path.exists(meta_path):
@@ -415,8 +408,14 @@ def _get_latest_payload_time() -> datetime:
     except Exception:
         pass
 
-    return datetime.now(TZ_TAIPEI)
+    df4_path = os.path.join(LATEST_DIR, "df4.csv")
+    try:
+        if os.path.exists(df4_path):
+            return datetime.fromtimestamp(os.path.getmtime(df4_path), TZ_TAIPEI)
+    except Exception:
+        pass
 
+    return datetime.now(TZ_TAIPEI)
 
 
 def _get_latest_df4_mtime_ns() -> int:
@@ -474,9 +473,19 @@ def _build_overview_from_df4(period_label: str, row_dt: datetime | None = None, 
             return 0
         return row.iloc[0][col]
 
+    source = "dashboard"
+    try:
+        meta_path = os.path.join(LATEST_DIR, "meta.json")
+        if os.path.exists(meta_path):
+            with open(meta_path, "r", encoding="utf-8") as f:
+                meta = json.load(f)
+            source = str(meta.get("trigger") or source)
+    except Exception:
+        pass
+
     row = {
         "id": f"{run_key or row_dt.strftime('%Y%m%d%H%M%S%f')}_{period_label}",
-        "來源": "dashboard",
+        "來源": source,
         "統計月份": stat_month,
         "日期": row_dt.strftime("%Y/%m/%d %H:%M"),
         "台北業績": get_val("台北", amount_col),
@@ -495,22 +504,32 @@ def _build_overview_from_df4(period_label: str, row_dt: datetime | None = None, 
 
 
 def _sync_period_csv_from_df4(path: str, period_label: str) -> pd.DataFrame:
-    """Append the latest df4 run into the requested monthly tracking CSV.
+    """Ensure monthly tracking contains the latest df4 row.
 
-    No backup/fallback label, no overwriting, no deleting old rows.
-    The event key is df4.csv mtime_ns, so every completed 更新資料 click creates
-    a new row for 本月 and a new row for 次月. If the same run is rendered again,
-    the same id is detected and not duplicated.
+    df4.csv is the single source used by the top monthly summary. This function
+    runs when the monthly-tracking tabs render, so even if the backend updated
+    df4.csv but failed to append daily_df.csv / next_month_daily_df.csv, the UI
+    repairs the tracking CSV from the same top-summary numbers.
+
+    It appends at most one row per dashboard update event. Re-rendering the page
+    will not duplicate the row. Old rows are preserved unless deleted manually.
     """
     ns = _get_latest_df4_mtime_ns()
-    row_dt = _dt_from_ns(ns)
-    run_key = str(ns) if ns else row_dt.strftime('%Y%m%d%H%M%S%f')
+    row_dt = _get_latest_payload_time()
+    # Use a stable id for the current df4 file. If meta time is visible to the
+    # user, keep it readable; include df4 mtime ns to distinguish repeated runs.
+    visible_key = row_dt.strftime("%Y%m%d%H%M%S")
+    run_key = f"{visible_key}_{ns}" if ns else visible_key
+
     new_df = _build_overview_from_df4(period_label, row_dt=row_dt, run_key=run_key)
     if new_df.empty:
         return _read_csv_safe(path)
 
+    # Keep current-month rows even if the value is zero in rare edge cases; only
+    # skip rows where every amount is truly blank/zero and df4 has no usable data.
     amount_cols = ["台北業績", "台中業績", "桃園業績", "新竹業績", "高雄業績", "全區合計"]
-    if all(pd.to_numeric(new_df[c], errors="coerce").fillna(0).iloc[0] == 0 for c in amount_cols):
+    has_any_amount = any(pd.to_numeric(new_df[c], errors="coerce").fillna(0).iloc[0] != 0 for c in amount_cols)
+    if not has_any_amount and _read_csv_safe(os.path.join(LATEST_DIR, "df4.csv")).empty:
         return _read_csv_safe(path)
 
     os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -523,34 +542,37 @@ def _sync_period_csv_from_df4(path: str, period_label: str) -> pd.DataFrame:
             if c not in old_df.columns:
                 old_df[c] = ""
         old_df = old_df[new_df.columns].copy()
+
         new_id = str(new_df.iloc[0]["id"])
+        new_date = pd.to_datetime(str(new_df.iloc[0]["日期"]), errors="coerce")
+        new_total = pd.to_numeric(pd.Series([new_df.iloc[0]["全區合計"]]), errors="coerce").fillna(-999999999).iloc[0]
+
         already_written = False
         if "id" in old_df.columns and new_id in old_df["id"].astype(str).tolist():
             already_written = True
 
-        # If performance_report.py already appended this exact update, do not
-        # create a duplicate UI-sync row. Compare timestamp within 2 seconds
-        # and the same total amount.
-        if not already_written and "日期" in old_df.columns and "全區合計" in old_df.columns:
+        # If performance_report.py already wrote the same update using its own
+        # id, avoid a duplicate by comparing visible update time and total.
+        if not already_written and pd.notna(new_date) and "日期" in old_df.columns and "全區合計" in old_df.columns:
             old_dates = pd.to_datetime(old_df["日期"], errors="coerce")
-            new_date = pd.to_datetime(str(new_df.iloc[0]["日期"]), errors="coerce")
-            old_total = pd.to_numeric(old_df["全區合計"], errors="coerce").fillna(-1)
-            new_total = pd.to_numeric(pd.Series([new_df.iloc[0]["全區合計"]]), errors="coerce").fillna(-2).iloc[0]
-            if pd.notna(new_date):
-                close_time = (old_dates - new_date).abs() <= pd.Timedelta(seconds=2)
-                same_total = old_total == new_total
-                already_written = bool((close_time & same_total).any())
+            old_total = pd.to_numeric(old_df["全區合計"], errors="coerce").fillna(-999999998)
+            close_time = (old_dates - new_date).abs() <= pd.Timedelta(minutes=3)
+            same_total = old_total == new_total
+            already_written = bool((close_time & same_total).any())
 
         if already_written:
             out = old_df
         else:
             out = pd.concat([new_df, old_df], ignore_index=True)
 
+    out["_sort_dt"] = pd.to_datetime(out["日期"], errors="coerce")
+    out = out.sort_values(["_sort_dt", "id"], ascending=[False, False]).drop(columns=["_sort_dt"]).reset_index(drop=True)
     out.to_csv(path, index=False, encoding="utf-8-sig")
-    return out.reset_index(drop=True)
+    return out
 
 def _show_period_section(title: str, filename: str, period_label: str):
     path = os.path.join(LATEST_DIR, filename)
+    _sync_period_csv_from_df4(path, period_label)
     _show_deletable_csv_section(
         title=title,
         path=path,
@@ -591,11 +613,11 @@ def _show_month_end_snapshot_tab():
 
 
 def _render_page_without_builtin_daily_overview():
-    """Render the original performance page, but suppress its old daily overview block.
+    """Render the original performance page, but suppress blocks now owned here.
 
-    The app now owns a single combined monthly-tracking area with tabs for
-    current month / next month / month-end snapshot, so the old standalone
-    "當月每日業績總覽" block from dashboard_main should not be shown twice.
+    This app renders one combined monthly-tracking area and places the email
+    preview below it. Therefore the old standalone daily overview and the old
+    email preview from dashboard_main are hidden during the original render.
     """
     original = {
         "markdown": st.markdown,
@@ -607,8 +629,18 @@ def _render_page_without_builtin_daily_overview():
         "warning": st.warning,
         "success": st.success,
         "write": st.write,
+        "expander": st.expander,
+        "components_html": components.html,
     }
     skipping = {"on": False}
+
+    class _SkipContext:
+        def __enter__(self):
+            skipping["on"] = True
+            return self
+        def __exit__(self, exc_type, exc, tb):
+            skipping["on"] = False
+            return False
 
     def should_start_skip(args, kwargs):
         text = ""
@@ -616,6 +648,8 @@ def _render_page_without_builtin_daily_overview():
             text = str(args[0])
         elif "body" in kwargs:
             text = str(kwargs.get("body"))
+        # dashboard_main's old standalone block. Once this starts, everything
+        # after it in that render is skipped; this file renders the replacement.
         return "當月每日業績總覽" in text
 
     def patch_markdown(*args, **kwargs):
@@ -625,6 +659,18 @@ def _render_page_without_builtin_daily_overview():
         if skipping["on"]:
             return None
         return original["markdown"](*args, **kwargs)
+
+    def patch_expander(label, *args, **kwargs):
+        if "信件預覽" in str(label):
+            return _SkipContext()
+        if skipping["on"]:
+            return _SkipContext()
+        return original["expander"](label, *args, **kwargs)
+
+    def patch_components_html(*args, **kwargs):
+        if skipping["on"]:
+            return None
+        return original["components_html"](*args, **kwargs)
 
     def patch_noop(name):
         def inner(*args, **kwargs):
@@ -647,6 +693,8 @@ def _render_page_without_builtin_daily_overview():
         st.warning = patch_noop("warning")
         st.success = patch_noop("success")
         st.write = patch_noop("write")
+        st.expander = patch_expander
+        components.html = patch_components_html
         render_page("業績報表")
     finally:
         st.markdown = original["markdown"]
@@ -658,7 +706,26 @@ def _render_page_without_builtin_daily_overview():
         st.warning = original["warning"]
         st.success = original["success"]
         st.write = original["write"]
+        st.expander = original["expander"]
+        components.html = original["components_html"]
 
+
+def render_email_preview_section():
+    html_path = os.path.join(LATEST_DIR, "email_preview.html")
+    st.markdown("---")
+    with st.expander("📧 信件預覽", expanded=False):
+        if not os.path.exists(html_path):
+            st.info("目前沒有信件預覽。請先按『更新資料』產生 email_preview.html。")
+            return
+        try:
+            with open(html_path, "r", encoding="utf-8") as f:
+                html = f.read()
+            if not html.strip():
+                st.info("信件預覽檔案是空的。請重新更新資料。")
+                return
+            components.html(html, height=520, scrolling=True)
+        except Exception as e:
+            st.warning(f"無法讀取信件預覽：{e}")
 
 def render_monthly_tracking_tabs():
     # 取代 dashboard_main 原本單獨的「當月每日業績總覽」。
@@ -687,6 +754,7 @@ def render_monthly_tracking_tabs():
 def render_performance_report_page():
     _render_page_without_builtin_daily_overview()
     render_monthly_tracking_tabs()
+    render_email_preview_section()
 
 
 if st.session_state.page == "業績報表":
