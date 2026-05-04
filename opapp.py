@@ -374,7 +374,22 @@ def render_month_end_snapshot_page():
     )
 
 
-if st.session_state.page == "次月統計報表":
+def render_performance_report_page():
+    # 保留原本 dashboard_main 的業績報表畫面。
+    render_page("業績報表")
+
+    # 實務上常會直接停在「業績報表」頁，所以把次月與月底快照
+    # 直接接在同一頁下方，不需要另外找頁籤才看得到。
+    st.markdown("---")
+    render_next_month_report_page()
+
+    st.markdown("---")
+    render_month_end_snapshot_page()
+
+
+if st.session_state.page == "業績報表":
+    render_performance_report_page()
+elif st.session_state.page == "次月統計報表":
     render_next_month_report_page()
 elif st.session_state.page == "月底快照":
     render_month_end_snapshot_page()
