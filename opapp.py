@@ -512,8 +512,8 @@ def _sync_period_csv_from_df4(path: str, period_label: str) -> pd.DataFrame:
         else:
             out = pd.concat([df, fallback_df], ignore_index=True)
 
-    if "統計月份" in out.columns:
-        out = out[out["統計月份"].astype(str) == stat_month].copy()
+    # 保留既有歷史資料，不因舊資料缺少「統計月份」欄位而被清掉。
+    # 只負責把最新一次更新補進來；刪除只透過使用者勾選按鈕。
     if "日期" in out.columns:
         out["_sort_dt"] = pd.to_datetime(out["日期"], format="%Y/%m/%d %H:%M", errors="coerce")
         out = out.sort_values(["_sort_dt", "id"], ascending=[False, False]).drop(columns=["_sort_dt"])
