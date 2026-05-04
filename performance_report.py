@@ -1,1175 +1,397 @@
 import os
-import json
-import calendar
-import smtplib
-from email.mime.text import MIMEText
+import pandas as pd
+import streamlit as st
 from datetime import datetime, timedelta, timezone
+from dashboard_main import render_page
+
+st.set_page_config(
+    page_title="Jenny 排程控制台",
+    page_icon="🍋",
+    layout="wide",
+)
 
 TZ_TAIPEI = timezone(timedelta(hours=8))
 
-def now_dt():
-    return datetime.now(TZ_TAIPEI)
-from typing import Optional
-
-import pandas as pd
-import requests
-from bs4 import BeautifulSoup
-
-from accounts import ACCOUNTS
-from paths import PATH_REPORT
-
-
-LOGIN_URL = "https://backend.lemonclean.com.tw/login"
-PURCHASE_URL = "https://backend.lemonclean.com.tw/purchase"
-HEADERS = {"User-Agent": "Mozilla/5.0"}
-
-CITY_ORDER = ["台北", "台中", "桃園", "新竹", "高雄"]
-INCOME_ORDER = ["現金收入", "儲值金"]
-CATEGORY_ORDER = ["清潔", "儲值金", "冷氣", "洗衣機", "水洗", "收納"]
-
-REGION3_CATEGORY_ORDER = [
-    "清潔",
-    "冷氣",
-    "洗衣機",
-    "水洗",
-    "收納",
-    "儲值金",
-    "清潔現金+儲值金",
-    "家電現金+儲值金",
-    "水洗/收納現金+儲值金",
-    "清潔+水洗+收納現金+儲值金",
+TOP_PAGES = [
+    ("主控表",       "📋"),
+    ("業績報表",     "💹"),
+    ("次月統計報表", "📈"),
+    ("月底快照",     "📌"),
+    ("上下半月訂單", "🧾"),
+    ("手動執行",     "▶️"),
+    ("Log 監控",    "📄"),
+    ("輸出檔案",     "📂"),
+    ("程式管理",     "⚙️"),
+    ("排程設定",     "⏰"),
 ]
 
+if "page" not in st.session_state:
+    st.session_state.page = "主控表"
+
+# ── Global CSS ────────────────────────────────────────────────────────────────
+st.markdown("""
+<style>
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=DM+Mono:wght@400;500&display=swap');
+
+/* ─── Base ─── */
+html, body,
+[data-testid="stAppViewContainer"],
+[data-testid="stApp"] {
+    background: #f0f2f6 !important;
+    font-family: 'DM Sans','PingFang TC','Noto Sans TC',sans-serif !important;
+    color: #1e293b !important;
+}
+[data-testid="stHeader"],
+[data-testid="stSidebar"] { display: none !important; }
+.block-container { padding: 0 2.4rem 4rem !important; max-width: 1480px !important; }
+
+/* ─── Topbar ─── */
+.topbar {
+    background: #fff;
+    margin: 0 -2.4rem;
+    padding: 0 28px;
+    border-bottom: 1px solid #e8ecf0;
+    position: sticky; top: 0; z-index: 999;
+    box-shadow: 0 1px 8px rgba(15,23,42,.06);
+}
+.topbar-inner { display: flex; align-items: center; height: 52px; }
+.topbar-brand { display: flex; align-items: center; gap: 9px; flex-shrink: 0; }
+.topbar-logo  { font-size: 20px; line-height: 1; }
+.topbar-name  { font-size: 14px; font-weight: 700; color: #0f172a; letter-spacing: -.01em; white-space: nowrap; }
+.topbar-sep   { width: 1px; height: 20px; background: #dde2e8; margin: 0 18px; flex-shrink: 0; }
+.topbar-clock { font-size: 12px; color: #64748b; font-weight: 500; margin-left: auto; font-variant-numeric: tabular-nums; }
+
+/* ─── Nav strip ─── */
+.nav-strip {
+    background: #fff;
+    margin: 0 -2.4rem;
+    padding: 0 12px;
+    border-bottom: 1px solid #e8ecf0;
+}
+
+/* ─── Nav buttons — ALWAYS override global button style ─── */
+html body .nav-wrap div[data-testid="stButton"] > button,
+html body .nav-wrap div[data-testid="stButton"] > button:focus,
+html body .nav-wrap div[data-testid="stButton"] > button:active {
+    height: 40px !important;
+    padding: 0 14px !important;
+    border-radius: 0 !important;
+    border: none !important;
+    border-bottom: 2px solid transparent !important;
+    background: transparent !important;
+    color: #64748b !important;
+    font-weight: 600 !important;
+    font-size: 12px !important;
+    box-shadow: none !important;
+    white-space: nowrap !important;
+    letter-spacing: 0 !important;
+}
+html body .nav-wrap div[data-testid="stButton"] > button:hover {
+    color: #1e293b !important;
+    background: #f4f6f9 !important;
+    border-bottom: 2px solid transparent !important;
+}
+html body .nav-wrap.active div[data-testid="stButton"] > button {
+    color: #2563eb !important;
+    background: #eff6ff !important;
+    border-bottom: 2px solid #2563eb !important;
+}
+
+/* ─── Page header ─── */
+.page-header {
+    padding: 22px 0 16px;
+    border-bottom: 1px solid #e8ecf0;
+    margin-bottom: 22px;
+    display: flex; align-items: flex-end; gap: 12px;
+}
+.page-title    { font-size: 22px; font-weight: 700; color: #0f172a; line-height: 1; letter-spacing: -.02em; }
+.page-subtitle { font-size: 10px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; color: #94a3b8; padding-bottom: 1px; }
+
+/* ─── KPI cards ─── */
+.kpi-row { display: flex; gap: 12px; margin-bottom: 22px; }
+.kpi-card {
+    flex: 1; background: #fff; border: 1px solid #e8ecf0; border-radius: 12px;
+    padding: 16px 20px 14px; position: relative; overflow: hidden;
+    box-shadow: 0 1px 3px rgba(15,23,42,.04), 0 3px 10px rgba(15,23,42,.04);
+}
+.kpi-card::before {
+    content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px; border-radius: 12px 12px 0 0;
+}
+.kpi-card.blue::before  { background: linear-gradient(90deg,#2563eb,#60a5fa); }
+.kpi-card.green::before { background: linear-gradient(90deg,#059669,#34d399); }
+.kpi-card.amber::before { background: linear-gradient(90deg,#b45309,#fbbf24); }
+.kpi-card.red::before   { background: linear-gradient(90deg,#dc2626,#f87171); }
+.kpi-label { font-size: 9.5px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: #64748b; margin-bottom: 7px; }
+.kpi-value { font-size: 34px; font-weight: 700; color: #0f172a; line-height: 1; letter-spacing: -.03em; font-variant-numeric: tabular-nums; }
+.kpi-sub   { font-size: 11.5px; color: #64748b; font-weight: 500; margin-top: 5px; }
+
+/* ─── Section card ─── */
+.section-card {
+    background: #fff; border: 1px solid #e8ecf0; border-radius: 12px;
+    padding: 20px 22px 18px; margin-bottom: 16px;
+    box-shadow: 0 1px 3px rgba(15,23,42,.04), 0 3px 10px rgba(15,23,42,.04);
+}
+.section-title {
+    font-size: 11px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase;
+    color: #2563eb; margin-bottom: 16px; padding-bottom: 12px;
+    border-bottom: 1px solid #f1f5f9;
+    display: flex; align-items: center; gap: 7px;
+}
+
+/* ─── Status badges ─── */
+.badge {
+    display: inline-flex; align-items: center; gap: 5px;
+    font-size: 11px; font-weight: 600; padding: 3px 9px; border-radius: 20px; white-space: nowrap;
+}
+.badge::before { content:''; width:5px; height:5px; border-radius:50%; flex-shrink:0; }
+.b-green  { color:#065f46; background:#d1fae5; } .b-green::before  { background:#059669; }
+.b-yellow { color:#78350f; background:#fef3c7; } .b-yellow::before { background:#d97706; }
+.b-red    { color:#991b1b; background:#fee2e2; } .b-red::before    { background:#dc2626; }
+.b-gray   { color:#475569; background:#f1f5f9; } .b-gray::before   { background:#94a3b8; }
+.b-blue   { color:#1d4ed8; background:#dbeafe; } .b-blue::before   { background:#2563eb; }
+
+/* ─── Run button ─── */
+html body .run-btn div[data-testid="stButton"] > button {
+    background: #1e293b !important; color: #f1f5f9 !important;
+    border: none !important; border-radius: 6px !important;
+    font-weight: 600 !important; font-size: 12px !important;
+    padding: 3px 11px !important; height: 28px !important; min-height: 28px !important;
+    box-shadow: none !important;
+}
+html body .run-btn div[data-testid="stButton"] > button:hover { background: #0f172a !important; }
+
+/* ─── Save button ─── */
+html body .save-btn div[data-testid="stButton"] > button {
+    background: #f0f9ff !important; color: #0369a1 !important;
+    border: 1px solid #bae6fd !important; border-radius: 6px !important;
+    font-weight: 700 !important; font-size: 12px !important;
+    padding: 2px 9px !important; height: 28px !important; min-height: 28px !important;
+    box-shadow: none !important;
+}
+html body .save-btn div[data-testid="stButton"] > button:hover { background: #e0f2fe !important; }
+
+/* ─── Inline task result (success/fail tag under each row) ─── */
+.task-result-row {
+    padding: 6px 4px 10px;
+    border-bottom: 1px solid #f1f5f9;
+    margin-bottom: 4px;
+}
+.task-result-ok   { background: #f0fdf4; border-radius: 8px; padding: 8px 14px; font-size: 12.5px; color: #166534; font-weight: 500; }
+.task-result-fail { background: #fef2f2; border-radius: 8px; padding: 8px 14px; font-size: 12.5px; color: #991b1b; font-weight: 500; }
+
+/* ─── Exec log panel ─── */
+.exec-panel {
+    background: #fff; border: 1px solid #e8ecf0; border-left: 3px solid #2563eb;
+    border-radius: 10px; padding: 14px 18px; margin-top: 10px;
+    box-shadow: 0 1px 3px rgba(15,23,42,.04);
+}
+.exec-panel.ok   { border-left-color: #059669; }
+.exec-panel.fail { border-left-color: #dc2626; }
+.exec-panel-title { font-size: 13px; font-weight: 700; color: #0f172a; margin-bottom: 8px; display:flex; align-items:center; gap:8px; }
+.exec-label { font-size: 9.5px; font-weight: 700; letter-spacing:.1em; text-transform:uppercase; color:#94a3b8; margin: 10px 0 5px; }
+
+/* ─── Log box ─── */
+.log-box {
+    background: #0d1117; border: 1px solid #1e2d3d; border-radius: 9px;
+    padding: 12px 16px;
+    font-family: 'DM Mono','Menlo',monospace; font-size: 12px;
+    line-height: 1.75; white-space: pre-wrap; word-break: break-all;
+    max-height: 380px; overflow: auto;
+}
+.log-err    { color: #f87171; display: block; }
+.log-ok     { color: #4ade80; display: block; }
+.log-warn   { color: #fbbf24; display: block; }
+.log-info   { color: #60a5fa; display: block; }
+.log-normal { color: #94a3b8; display: block; }
+.log-meta   { font-size: 11px; color: #64748b; font-weight: 500; margin-bottom: 7px; }
+
+/* ─── Next-run chip ─── */
+.next-run {
+    display: inline-flex; align-items: center; gap: 5px;
+    background: #f8fafc; border: 1px solid #e8ecf0; border-radius: 7px;
+    padding: 3px 9px; font-size: 11px; font-weight: 600; color: #475569;
+}
+
+/* ─── Command preview ─── */
+.cmd-preview {
+    background: #1e293b; color: #94a3b8; border-radius: 9px;
+    padding: 10px 16px; font-family: 'DM Mono','Menlo',monospace; font-size: 12px;
+    margin: 10px 0 14px; word-break: break-all;
+}
+.cmd-preview .cmd-hl { color: #60a5fa; }
+.cmd-preview .cmd-arg { color: #a3e635; }
+.cmd-preview .cmd-city { color: #fb923c; }
+
+/* ─── Empty state ─── */
+.empty-state {
+    text-align: center; padding: 28px 20px; color: #94a3b8; font-size: 12.5px; font-weight: 500;
+    background: #f8fafc; border-radius: 9px; border: 1px dashed #dde2e8;
+}
+.empty-state .icon { font-size: 26px; display: block; margin-bottom: 7px; }
+
+/* ─── Date range chip ─── */
+.date-chip {
+    display: inline-flex; align-items: center; gap: 6px;
+    background: #f0f9ff; border: 1px solid #bae6fd; border-radius: 8px;
+    padding: 5px 12px; font-size: 12.5px; font-weight: 600; color: #0369a1; margin: 8px 0 12px;
+}
+
+/* ─── Streamlit overrides ─── */
+div[data-testid="stButton"] > button {
+    background: #1e293b !important; color: #f8fafc !important; border: none !important;
+    border-radius: 8px !important; font-weight: 600 !important; font-size: 13px !important;
+    padding: 8px 18px !important; box-shadow: 0 1px 3px rgba(15,23,42,.12) !important;
+}
+div[data-testid="stButton"] > button:hover { background: #0f172a !important; }
+
+div[data-testid="stSelectbox"] > div > div,
+div[data-testid="stTextInput"] > div > div > input {
+    background: #fff !important; border: 1px solid #d1d9e0 !important;
+    border-radius: 8px !important; color: #1e293b !important; font-size: 13.5px !important;
+}
+div[data-testid="stSelectbox"] label,
+div[data-testid="stTextInput"] label,
+div[data-testid="stTextArea"] label,
+div[data-testid="stRadio"] label {
+    color: #374151 !important; font-size: 13px !important; font-weight: 600 !important;
+}
+div[data-testid="stTextArea"] textarea {
+    border: 1px solid #d1d9e0 !important; border-radius: 8px !important;
+    font-family: 'DM Mono',monospace !important; font-size: 12.5px !important;
+    color: #1e293b !important; background: #fafafa !important;
+}
+div[data-testid="stMetric"] {
+    background: #fff; border-radius: 11px; padding: 14px 16px;
+    border: 1px solid #e8ecf0; box-shadow: 0 1px 3px rgba(15,23,42,.04);
+}
+div[data-testid="stMetric"] label { color: #475569 !important; font-size: 12px !important; font-weight: 600 !important; }
+div[data-testid="stMetric"] [data-testid="stMetricValue"] { color: #0f172a !important; font-size: 26px !important; font-weight: 700 !important; }
+div[data-testid="stDataFrame"] { border-radius: 9px !important; overflow: hidden !important; border: 1px solid #e8ecf0 !important; }
+div[data-testid="stAlert"] { border-radius: 9px !important; font-size: 13px !important; font-weight: 500 !important; }
+.stCaption, div[data-testid="stCaption"] { color: #64748b !important; font-size: 11.5px !important; font-weight: 500 !important; }
+div[data-testid="stCheckbox"] label { color: #374151 !important; font-size: 13px !important; font-weight: 500 !important; }
+h3 { color: #0f172a !important; font-size: 15px !important; font-weight: 700 !important; }
+
+/* ─── Footer ─── */
+.footer-cap {
+    text-align: center; font-size: 11px; color: #94a3b8; font-weight: 500;
+    padding-top: 24px; border-top: 1px solid #e8ecf0; margin-top: 28px;
+}
+</style>
+""", unsafe_allow_html=True)
+
+# ── Topbar ────────────────────────────────────────────────────────────────────
+now_str = datetime.now(TZ_TAIPEI).strftime("%Y/%m/%d  %H:%M")
+st.markdown(
+    f"""<div class="topbar">
+      <div class="topbar-inner">
+        <div class="topbar-brand">
+          <span class="topbar-logo">🍋</span>
+          <span class="topbar-name">Jenny 排程控制台</span>
+        </div>
+        <div class="topbar-sep"></div>
+        <div class="topbar-clock">🕐 {now_str}</div>
+      </div>
+    </div>""",
+    unsafe_allow_html=True,
+)
+
+# ── Navigation strip ──────────────────────────────────────────────────────────
+st.markdown('<div class="nav-strip">', unsafe_allow_html=True)
+nav_cols = st.columns(len(TOP_PAGES))
+for i, (label, icon) in enumerate(TOP_PAGES):
+    active = st.session_state.page == label
+    with nav_cols[i]:
+        cls = "nav-wrap active" if active else "nav-wrap"
+        st.markdown(f'<div class="{cls}">', unsafe_allow_html=True)
+        if st.button(f"{icon} {label}", key=f"nav_{label}"):
+            st.session_state.page = label
+            st.rerun()
+        st.markdown("</div>", unsafe_allow_html=True)
+st.markdown("</div>", unsafe_allow_html=True)
+
+# ── Render page ───────────────────────────────────────────────────────────────
 DASHBOARD_DIR = os.path.join(".", "dashboard_data")
 LATEST_DIR = os.path.join(DASHBOARD_DIR, "latest")
-SNAPSHOT_DIR = os.path.join(DASHBOARD_DIR, "snapshots")
-EXEC_LOG_DIR = os.path.join(DASHBOARD_DIR, "execution_logs")
 DAILY_HISTORY_DIR = os.path.join(DASHBOARD_DIR, "daily_overview_history")
-NEXT_MONTH_HISTORY_DIR = os.path.join(DASHBOARD_DIR, "next_month_overview_history")
-MONTH_END_HISTORY_FILE = os.path.join(DAILY_HISTORY_DIR, "month_end_summary.csv")
-OUTPUT_LOG_FILE = os.path.join(DASHBOARD_DIR, "output_file_log.csv")
 
 
-def log(msg: str):
-    print(f"[{now_dt().strftime('%Y-%m-%d %H:%M:%S')}] {msg}")
-
-
-def ensure_dirs():
-    for p in [DASHBOARD_DIR, LATEST_DIR, SNAPSHOT_DIR, EXEC_LOG_DIR, DAILY_HISTORY_DIR, NEXT_MONTH_HISTORY_DIR]:
-        if os.path.exists(p) and not os.path.isdir(p):
-            raise RuntimeError(f"路徑存在但不是資料夾：{p}")
-        os.makedirs(p, exist_ok=True)
-
-
-def login(session, email, password):
-    res = session.get(LOGIN_URL, headers=HEADERS, allow_redirects=True)
-    res.raise_for_status()
-
-    soup = BeautifulSoup(res.text, "html.parser")
-    token_input = soup.find("input", {"name": "_token"})
-    if not token_input:
-        raise RuntimeError("找不到 _token，無法登入")
-
-    payload = {
-        "_token": token_input.get("value"),
-        "email": email,
-        "password": password,
-    }
-
-    login_res = session.post(LOGIN_URL, data=payload, headers=HEADERS, allow_redirects=True)
-    login_res.raise_for_status()
-
-    if "login" in login_res.url.lower():
-        raise RuntimeError(f"{email} 登入失敗")
-
-    log(f"✅ 登入成功：{email}")
-
-
-def get_ranges():
-    today = datetime.today()
-    y, m = today.year, today.month
-
-    this_start = f"{y}-{m:02d}-01"
-    this_end = f"{y}-{m:02d}-{calendar.monthrange(y, m)[1]:02d}"
-
-    if m == 12:
-        ny, nm = y + 1, 1
-    else:
-        ny, nm = y, m + 1
-
-    next_start = f"{ny}-{nm:02d}-01"
-    next_end = f"{ny}-{nm:02d}-{calendar.monthrange(ny, nm)[1]:02d}"
-
-    return (this_start, this_end), (next_start, next_end)
-
-
-def build_url(start, end, status, keyword=""):
-    params = {
-        "keyword": keyword,
-        "name": "",
-        "phone": "",
-        "orderNo": "",
-        "date_s": "",
-        "date_e": "",
-        "clean_date_s": start,
-        "clean_date_e": end,
-        "paid_at_s": "",
-        "paid_at_e": "",
-        "refundDateS": "",
-        "refundDateE": "",
-        "buy": "",
-        "area_id": "",
-        "isCharge": "",
-        "isRefund": "",
-        "p_board": "on",
-        "payway": "",
-        "purchase_status": str(status),
-        "progress_status": "",
-        "invoiceStatus": "",
-        "otherFee": "",
-        "orderBy": "",
-    }
-    return requests.Request("GET", PURCHASE_URL, params=params).prepare().url
-
-
-def get_keywords(city):
-    if city == "新竹":
-        return ["新竹"]
-    if city == "高雄":
-        return ["高雄", "台南"]
-    return [""]
-
-
-def safe_int(v):
+def _read_csv_safe(path: str) -> pd.DataFrame:
+    if not os.path.exists(path):
+        return pd.DataFrame()
     try:
-        s = str(v).replace(",", "").strip()
-        if s in ("", "-", "None", "nan"):
-            return 0
-        return int(float(s))
+        return pd.read_csv(path, encoding="utf-8-sig")
     except Exception:
-        return 0
-
-
-def normalize_service(name):
-    name = str(name or "").strip().replace("螨", "蟎")
-
-    mapping = {
-        "VIP": "儲值金",
-        "冷氣機清潔": "冷氣清潔",
-        "冷氣機清潔服務": "冷氣清潔",
-        "洗衣機": "洗衣機清潔",
-        "洗衣機清潔": "洗衣機清潔",
-        "沙發床墊水洗除蟎": "水洗",
-        "沙發床墊水洗除螨": "水洗",
-        "沙發清洗": "水洗",
-        "床墊清洗": "水洗",
-        "整理收納": "收納",
-    }
-    return mapping.get(name, name)
-
-
-def detect_income_type(first_header):
-    first_header = str(first_header or "").strip()
-    if first_header in ("VIP", "儲值金"):
-        return "儲值金"
-    return "現金收入"
-
-
-def normalize_date_text(text: str) -> Optional[str]:
-    txt = str(text or "").strip()
-    if not txt:
-        return None
-
-    txt = txt.replace("年", "-").replace("月", "-").replace("日", "")
-    txt = txt.replace("/", "-").replace(".", "-")
-    txt = " ".join(txt.split())
-
-    import re
-
-    patterns = [
-        r"(20\d{2}-\d{1,2}-\d{1,2})",
-        r"(20\d{6})",
-        r"(\d{4}/\d{1,2}/\d{1,2})",
-        r"(\d{4}\.\d{1,2}\.\d{1,2})",
-        r"(\d{1,2}-\d{1,2})",
-        r"(\d{1,2}/\d{1,2})",
-    ]
-
-    for p in patterns:
-        m = re.search(p, txt)
-        if not m:
-            continue
-
-        raw = m.group(1)
         try:
-            if re.fullmatch(r"20\d{2}-\d{1,2}-\d{1,2}", raw):
-                dt = datetime.strptime(raw, "%Y-%m-%d")
-                return dt.strftime("%Y-%m-%d")
-            if re.fullmatch(r"20\d{6}", raw):
-                dt = datetime.strptime(raw, "%Y%m%d")
-                return dt.strftime("%Y-%m-%d")
-            if re.fullmatch(r"\d{4}/\d{1,2}/\d{1,2}", raw):
-                dt = datetime.strptime(raw, "%Y/%m/%d")
-                return dt.strftime("%Y-%m-%d")
-            if re.fullmatch(r"\d{4}\.\d{1,2}\.\d{1,2}", raw):
-                dt = datetime.strptime(raw, "%Y.%m.%d")
-                return dt.strftime("%Y-%m-%d")
-            if re.fullmatch(r"\d{1,2}-\d{1,2}", raw):
-                today = datetime.today()
-                dt = datetime.strptime(f"{today.year}-{raw}", "%Y-%m-%d")
-                return dt.strftime("%Y-%m-%d")
-            if re.fullmatch(r"\d{1,2}/\d{1,2}", raw):
-                today = datetime.today()
-                dt = datetime.strptime(f"{today.year}/{raw}", "%Y/%m/%d")
-                return dt.strftime("%Y-%m-%d")
+            return pd.read_csv(path)
         except Exception:
-            pass
-
-    return None
-
-
-def parse_html(html):
-    soup = BeautifulSoup(html, "html.parser")
-    tables = soup.find_all("table")
-    results = []
-
-    date_candidates = ["服務日期", "清潔日期", "日期", "預約日期", "服務日", "clean_date"]
-
-    for table in tables:
-        trs = table.find_all("tr")
-        rows = []
-
-        for tr in trs:
-            cells = tr.find_all(["th", "td"])
-            row = [c.get_text(" ", strip=True) for c in cells]
-            if any(str(x).strip() for x in row):
-                rows.append(row)
-
-        if not rows:
-            continue
-
-        header = [str(x).strip() for x in rows[0]]
-
-        if "已付款金額" not in header and "待付款金額" not in header:
-            continue
-
-        paid_idx = header.index("已付款金額") if "已付款金額" in header else None
-        unpaid_idx = header.index("待付款金額") if "待付款金額" in header else None
-
-        date_idx = None
-        for name in date_candidates:
-            if name in header:
-                date_idx = header.index(name)
-                break
-
-        income_type = detect_income_type(header[0] if header else "")
-        source = "儲值金表" if income_type == "儲值金" else "主表"
-
-        for row in rows[1:]:
-            if not row:
-                continue
-
-            service = normalize_service(row[0] if len(row) > 0 else "")
-            if not service or service == "加總" or service.startswith("LC"):
-                continue
-
-            paid = safe_int(row[paid_idx]) if paid_idx is not None and len(row) > paid_idx else 0
-            unpaid = safe_int(row[unpaid_idx]) if unpaid_idx is not None and len(row) > unpaid_idx else 0
-
-            service_date = None
-            if date_idx is not None and len(row) > date_idx:
-                service_date = normalize_date_text(row[date_idx])
-
-            results.append({
-                "收入類型": income_type,
-                "資料來源": source,
-                "服務": service,
-                "子項目": "",
-                "日期": service_date,
-                "已付款": paid,
-                "待付款": unpaid,
-            })
-
-    log(f"✅ parse_html rows = {len(results)}")
-    return results
-
-
-def to_category(service, income) -> Optional[str]:
-    if service == "儲值金" and income == "現金收入":
-        return "儲值金"
-    if service in ["居家清潔", "辦公室清潔", "裝修細清", "搬入清潔", "搬出清潔", "大掃除"]:
-        return "清潔"
-    if service == "冷氣清潔":
-        return "冷氣"
-    if service == "洗衣機清潔":
-        return "洗衣機"
-    if service == "水洗":
-        return "水洗"
-    if service == "收納":
-        return "收納"
-    return None
-
-
-def build_region1_df(raw_df: pd.DataFrame) -> pd.DataFrame:
-    work = raw_df.copy()
-
-    work["本月已付款"] = 0
-    work["本月待付款"] = 0
-    work["下月已付款"] = 0
-    work["下月待付款"] = 0
-
-    this_mask = work["月份"] == "本月"
-    next_mask = work["月份"] == "下月"
-
-    work.loc[this_mask, "本月已付款"] = work.loc[this_mask, "已付款"]
-    work.loc[this_mask, "本月待付款"] = work.loc[this_mask, "待付款"]
-    work.loc[next_mask, "下月已付款"] = work.loc[next_mask, "已付款"]
-    work.loc[next_mask, "下月待付款"] = work.loc[next_mask, "待付款"]
-
-    region1 = (
-        work.groupby(["城市", "收入類型", "資料來源", "服務", "子項目"], as_index=False)[
-            ["本月已付款", "本月待付款", "下月已付款", "下月待付款"]
-        ]
-        .sum()
-    )
-
-    region1["城市"] = pd.Categorical(region1["城市"], categories=CITY_ORDER, ordered=True)
-    region1["收入類型"] = pd.Categorical(region1["收入類型"], categories=INCOME_ORDER, ordered=True)
-    region1 = region1.sort_values(["城市", "收入類型", "服務"]).reset_index(drop=True)
-
-    region1["城市"] = region1["城市"].astype(str)
-    region1["收入類型"] = region1["收入類型"].astype(str)
-    return region1
-
-
-def build_region2_df(raw_df: pd.DataFrame) -> pd.DataFrame:
-    work = raw_df.copy()
-    work["類別"] = work.apply(lambda r: to_category(r["服務"], r["收入類型"]), axis=1)
-    work = work[work["類別"].notna()].copy()
-
-    rows = []
-    for city in CITY_ORDER:
-        for income in INCOME_ORDER:
-            for category in CATEGORY_ORDER:
-                sub = work[
-                    (work["城市"] == city) &
-                    (work["收入類型"] == income) &
-                    (work["類別"] == category)
-                ]
-
-                bm = sub[sub["月份"] == "本月"]
-                nm = sub[sub["月份"] == "下月"]
-
-                rows.append({
-                    "城市": city,
-                    "收入類型": income,
-                    "類別": category,
-                    "本月待付": bm["待付款"].sum(),
-                    "本月已付": bm["已付款"].sum(),
-                    "本月加總": bm["已付款"].sum() + bm["待付款"].sum(),
-                    "次月待付": nm["待付款"].sum(),
-                    "次月已付": nm["已付款"].sum(),
-                    "次月加總": nm["已付款"].sum() + nm["待付款"].sum(),
-                })
-
-    return pd.DataFrame(rows)
-
-
-def build_region3_df(region2_df: pd.DataFrame) -> pd.DataFrame:
-    rows = []
-
-    for city in CITY_ORDER:
-        city_df = region2_df[region2_df["城市"] == city].copy()
-
-        level1 = city_df[["城市", "類別", "收入類型", "本月加總", "次月加總"]].copy()
-        level1["加總類型"] = "加總1"
-        rows.extend(level1.to_dict("records"))
-
-        mapping_level2 = {
-            "清潔現金+儲值金": ["清潔"],
-            "家電現金+儲值金": ["冷氣", "洗衣機"],
-            "水洗/收納現金+儲值金": ["水洗", "收納"],
-        }
-
-        for new_cat, old_cats in mapping_level2.items():
-            tmp = city_df[city_df["類別"].isin(old_cats)]
-            rows.append({
-                "城市": city,
-                "類別": new_cat,
-                "收入類型": "現金+儲值金",
-                "本月加總": tmp["本月加總"].sum(),
-                "次月加總": tmp["次月加總"].sum(),
-                "加總類型": "加總2",
-            })
-
-        mapping_level3 = {
-            "清潔+水洗+收納現金+儲值金": ["清潔", "水洗", "收納"],
-            "家電現金+儲值金": ["冷氣", "洗衣機"],
-        }
-
-        for new_cat, old_cats in mapping_level3.items():
-            tmp = city_df[city_df["類別"].isin(old_cats)]
-            rows.append({
-                "城市": city,
-                "類別": new_cat,
-                "收入類型": "現金+儲值金",
-                "本月加總": tmp["本月加總"].sum(),
-                "次月加總": tmp["次月加總"].sum(),
-                "加總類型": "加總3",
-            })
-
-    region3 = pd.DataFrame(rows)
-    type_order = ["加總1", "加總2", "加總3"]
-
-    region3["城市"] = pd.Categorical(region3["城市"], categories=CITY_ORDER, ordered=True)
-    region3["加總類型"] = pd.Categorical(region3["加總類型"], categories=type_order, ordered=True)
-    region3["類別"] = pd.Categorical(region3["類別"], categories=REGION3_CATEGORY_ORDER, ordered=True)
-
-    region3 = region3.sort_values(["城市", "加總類型", "類別", "收入類型"]).reset_index(drop=True)
-    region3["城市"] = region3["城市"].astype(str)
-    region3["類別"] = region3["類別"].astype(str)
-    region3["收入類型"] = region3["收入類型"].astype(str)
-    region3["加總類型"] = region3["加總類型"].astype(str)
-    return region3
-
-
-def build_region4_df(region2_df: pd.DataFrame) -> pd.DataFrame:
-    rows = []
-
-    for city in CITY_ORDER:
-        city_df = region2_df[region2_df["城市"] == city].copy()
-
-        appliance_df = city_df[city_df["類別"].isin(["冷氣", "洗衣機"])]
-        bm_appliance = appliance_df["本月加總"].sum()
-        nm_appliance = appliance_df["次月加總"].sum()
-
-        cash_stored_df = city_df[
-            (city_df["收入類型"] == "現金收入") &
-            (city_df["類別"] == "儲值金")
-        ]
-        bm_cash_stored = cash_stored_df["本月加總"].sum()
-        nm_cash_stored = cash_stored_df["次月加總"].sum()
-
-        # 本月/次月加總：清潔服務業績。
-        # 依後台統計表定義：
-        # 1) 現金收入主表是清潔服務，需納入已付款 + 待付款。
-        # 2) 儲值金表全部納入清潔服務總額；即使其中有冷氣/洗衣機，也不可扣掉。
-        # 3) 現金收入的家電表（冷氣/洗衣機）只放在「家電加總」breakdown，不放進本月/次月加總。
-        # 4) 現金收入的「儲值金購買」是預收款，不屬於服務業績，需排除。
-        total_df = city_df[
-            ~(
-                (city_df["收入類型"] == "現金收入") &
-                (city_df["類別"].isin(["儲值金", "冷氣", "洗衣機"]))
-            )
-        ]
-
-        rows.append({
-            "城市": city,
-            "本月加總": total_df["本月加總"].sum(),
-            "次月加總": total_df["次月加總"].sum(),
-            "本月家電加總": bm_appliance,
-            "次月家電加總": nm_appliance,
-            "儲值金": bm_cash_stored + nm_cash_stored,
-        })
-
-    region4 = pd.DataFrame(rows)
-    bm_sum = region4["本月加總"].sum()
-    nm_sum = region4["次月加總"].sum()
-
-    region4["本月佔比"] = 0 if bm_sum == 0 else region4["本月加總"] / bm_sum
-    region4["次月佔比"] = 0 if nm_sum == 0 else region4["次月加總"] / nm_sum
-
-    total_row = pd.DataFrame([{
-        "城市": "加總",
-        "本月加總": bm_sum,
-        "本月佔比": 1,
-        "次月加總": nm_sum,
-        "次月佔比": 1,
-        "本月家電加總": region4["本月家電加總"].sum(),
-        "次月家電加總": region4["次月家電加總"].sum(),
-        "儲值金": region4["儲值金"].sum(),
-    }])
-
-    region4 = pd.concat([region4, total_row], ignore_index=True)
-
-    return region4[[
-        "城市",
-        "本月加總",
-        "本月佔比",
-        "次月加總",
-        "次月佔比",
-        "本月家電加總",
-        "次月家電加總",
-        "儲值金",
-    ]]
-
-
-def _build_period_overview_df(
-    df4: pd.DataFrame,
-    source: str,
-    amount_col: str,
-    ratio_col: str,
-    latest_filename: str,
-    period_label: str,
-) -> pd.DataFrame:
-    cols = [
-        "id",
-        "來源",
-        "統計月份",
-        "日期",
-        "台北業績", "台北佔比",
-        "台中業績", "台中佔比",
-        "桃園業績", "桃園佔比",
-        "新竹業績", "新竹佔比",
-        "高雄業績", "高雄佔比",
-        "全區合計",
-    ]
-
-    if df4 is None or df4.empty:
-        log(f"⚠️ _build_period_overview_df：df4 為空，period={period_label}")
-        return pd.DataFrame(columns=cols)
-
-    latest_path = os.path.join(LATEST_DIR, latest_filename)
-    now_obj = now_dt()
-    row_id = f"{now_obj.strftime('%Y%m%d%H%M%S')}_{period_label}"
-    date_text = now_obj.strftime("%Y/%m/%d %H:%M")
-
-    if period_label == "次月":
-        y, m = now_obj.year, now_obj.month
-        if m == 12:
-            stat_month = f"{y + 1}/01"
-        else:
-            stat_month = f"{y}/{m + 1:02d}"
-    else:
-        stat_month = now_obj.strftime("%Y/%m")
-
-    def get_val(city, col):
-        try:
-            row = df4[df4["城市"] == city]
-            if row.empty or col not in row.columns:
-                return 0
-            return row.iloc[0][col]
-        except Exception:
-            return 0
-
-    if os.path.exists(latest_path):
-        try:
-            old_df = pd.read_csv(latest_path, encoding="utf-8-sig")
-        except Exception:
-            old_df = pd.DataFrame(columns=cols)
-    else:
-        old_df = pd.DataFrame(columns=cols)
-
-    for c in cols:
-        if c not in old_df.columns:
-            old_df[c] = ""
-
-    new_row = {
-        "id": row_id,
-        "來源": source,
-        "統計月份": stat_month,
-        "日期": date_text,
-        "台北業績": get_val("台北", amount_col),
-        "台北佔比": get_val("台北", ratio_col),
-        "台中業績": get_val("台中", amount_col),
-        "台中佔比": get_val("台中", ratio_col),
-        "桃園業績": get_val("桃園", amount_col),
-        "桃園佔比": get_val("桃園", ratio_col),
-        "新竹業績": get_val("新竹", amount_col),
-        "新竹佔比": get_val("新竹", ratio_col),
-        "高雄業績": get_val("高雄", amount_col),
-        "高雄佔比": get_val("高雄", ratio_col),
-        "全區合計": get_val("加總", amount_col),
-    }
-
-    out = pd.concat([old_df[cols], pd.DataFrame([new_row])], ignore_index=True)
-    out = out[out["統計月份"].astype(str) == stat_month].copy()
-
-    out["_sort_dt"] = pd.to_datetime(out["日期"], format="%Y/%m/%d %H:%M", errors="coerce")
-    out = out.sort_values(["_sort_dt", "id"], ascending=[False, False]).drop(columns=["_sort_dt"])
-    out = out.reset_index(drop=True)
-
-    log(f"✅ {period_label}統計報表完成，筆數 = {len(out)}")
-    return out[cols]
-
-
-def build_daily_overview_df(df4: pd.DataFrame, source: str = "dashboard") -> pd.DataFrame:
-    return _build_period_overview_df(
-        df4=df4,
-        source=source,
-        amount_col="本月加總",
-        ratio_col="本月佔比",
-        latest_filename="daily_df.csv",
-        period_label="本月",
-    )
-
-
-def build_next_month_overview_df(df4: pd.DataFrame, source: str = "dashboard") -> pd.DataFrame:
-    return _build_period_overview_df(
-        df4=df4,
-        source=source,
-        amount_col="次月加總",
-        ratio_col="次月佔比",
-        latest_filename="next_month_daily_df.csv",
-        period_label="次月",
-    )
-
-
-def build_month_end_summary_df(df4: pd.DataFrame, source: str = "dashboard") -> pd.DataFrame:
-    cols = ["id", "來源", "快照日期", "城市", "當月業績", "當月佔比", "次月業績", "次月佔比", "當月總業績", "次月總業績"]
-
-    if df4 is None or df4.empty:
-        return pd.DataFrame(columns=cols)
-
-    now_obj = now_dt()
-    month_last_day = calendar.monthrange(now_obj.year, now_obj.month)[1]
-    if now_obj.day != month_last_day:
-        return pd.DataFrame(columns=cols)
-
-    snapshot_date = now_obj.strftime("%Y/%m/%d")
-    row_id_prefix = now_obj.strftime("%Y%m%d")
-
-    def get_val(city, col):
-        try:
-            row = df4[df4["城市"] == city]
-            if row.empty or col not in row.columns:
-                return 0
-            return row.iloc[0][col]
-        except Exception:
-            return 0
-
-    current_total = get_val("加總", "本月加總")
-    next_total = get_val("加總", "次月加總")
-
-    rows = []
-    for city in CITY_ORDER + ["加總"]:
-        rows.append({
-            "id": f"{row_id_prefix}_{city}",
-            "來源": source,
-            "快照日期": snapshot_date,
-            "城市": city,
-            "當月業績": get_val(city, "本月加總"),
-            "當月佔比": get_val(city, "本月佔比"),
-            "次月業績": get_val(city, "次月加總"),
-            "次月佔比": get_val(city, "次月佔比"),
-            "當月總業績": current_total,
-            "次月總業績": next_total,
-        })
-
-    out = pd.DataFrame(rows, columns=cols)
-
-    if os.path.exists(MONTH_END_HISTORY_FILE):
-        try:
-            old_df = pd.read_csv(MONTH_END_HISTORY_FILE, encoding="utf-8-sig")
-        except Exception:
-            old_df = pd.DataFrame(columns=cols)
-    else:
-        old_df = pd.DataFrame(columns=cols)
-
-    for c in cols:
-        if c not in old_df.columns:
-            old_df[c] = ""
-
-    old_df = old_df[old_df["快照日期"].astype(str) != snapshot_date].copy()
-    history_df = pd.concat([old_df[cols], out], ignore_index=True)
-    history_df.to_csv(MONTH_END_HISTORY_FILE, index=False, encoding="utf-8-sig")
-    append_output_file_log("月底快照", MONTH_END_HISTORY_FILE, source)
-
-    month_folder = os.path.join(SNAPSHOT_DIR, now_obj.strftime("%Y%m"))
-    os.makedirs(month_folder, exist_ok=True)
-    snap_path = os.path.join(month_folder, f"{now_obj.strftime('%Y%m%d')}_month_end_summary.csv")
-    out.to_csv(snap_path, index=False, encoding="utf-8-sig")
-    append_output_file_log("月底快照", snap_path, source)
-
-    log(f"✅ 月底快照已記錄：{snapshot_date}")
+            return pd.DataFrame()
+
+
+def _format_report_df(df: pd.DataFrame) -> pd.DataFrame:
+    out = df.copy()
+    for col in out.columns:
+        col_text = str(col)
+        if any(k in col_text for k in ["業績", "合計", "總業績", "加總"]):
+            out[col] = pd.to_numeric(out[col], errors="coerce").fillna(0).astype(int).map(lambda x: f"{x:,}")
+        if "佔比" in col_text:
+            nums = pd.to_numeric(out[col], errors="coerce")
+            out[col] = nums.map(lambda x: "" if pd.isna(x) else f"{x:.2%}")
     return out
 
 
-def load_month_end_history() -> pd.DataFrame:
-    ensure_dirs()
-    cols = ["id", "來源", "快照日期", "城市", "當月業績", "當月佔比", "次月業績", "次月佔比", "當月總業績", "次月總業績"]
-    if not os.path.exists(MONTH_END_HISTORY_FILE):
-        return pd.DataFrame(columns=cols)
-    return pd.read_csv(MONTH_END_HISTORY_FILE, encoding="utf-8-sig")
-
-def format_region4_for_display(df4: pd.DataFrame) -> pd.DataFrame:
-    out = df4.copy()
-    for col in ["本月加總", "次月加總", "本月家電加總", "次月家電加總", "儲值金"]:
-        if col in out.columns:
-            out[col] = out[col].apply(lambda x: int(x) if pd.notna(x) else 0)
-    return out
-
-
-def build_region4_email_html(df4):
-    mail_df = df4.copy()
-
-    for col in ["本月加總", "次月加總", "本月家電加總", "次月家電加總", "儲值金"]:
-        if col in mail_df.columns:
-            mail_df[col] = mail_df[col].apply(lambda x: f"{int(x):,}" if pd.notna(x) else "")
-
-    if "本月佔比" in mail_df.columns:
-        mail_df["本月佔比"] = mail_df["本月佔比"].apply(lambda x: f"{x:.2%}" if pd.notna(x) else "")
-
-    if "次月佔比" in mail_df.columns:
-        mail_df["次月佔比"] = mail_df["次月佔比"].apply(lambda x: f"{x:.2%}" if pd.notna(x) else "")
-
-    html_table = mail_df.to_html(index=False, border=0)
-
-    return f"""
-    <html>
-      <head>
-        <style>
-          table {{
-            border-collapse: collapse;
-            font-family: Arial, sans-serif;
-            font-size: 14px;
-          }}
-          th, td {{
-            border: 1px solid #999;
-            padding: 6px 10px;
-          }}
-          th {{
-            background-color: #f2f2f2;
-            text-align: center;
-          }}
-          td {{
-            text-align: right;
-          }}
-          td:first-child {{
-            text-align: left;
-          }}
-        </style>
-      </head>
-      <body>
-        <p>您好，以下為業績報表：</p>
-        {html_table}
-      </body>
-    </html>
-    """
-
-
-def send_region4_email(df4, recipient="jenny@lemonclean.com.tw"):
-    sender = "jenny@lemonclean.com.tw"
-    password = "bkhe akob wvse ibhm"
-
-    today_str = datetime.today().strftime("%Y%m%d")
-    subject = f"業績報表{today_str}"
-    html = build_region4_email_html(df4)
-
-    msg = MIMEText(html, "html", "utf-8")
-    msg["Subject"] = subject
-    msg["From"] = sender
-    msg["To"] = recipient
-
-    with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
-        server.login(sender, password)
-        server.sendmail(sender, [recipient], msg.as_string())
-
-    log(f"✅ 已寄出：{recipient}")
-
-
-def load_execution_log_for_current_month() -> pd.DataFrame:
-    return pd.DataFrame()
-
-
-def delete_execution_log_rows(ids):
-    return 0
-
-
-def append_daily_overview_history(daily_df: pd.DataFrame, trigger: str):
-    return None
-
-
-def load_daily_history_for_current_month() -> pd.DataFrame:
-    return pd.DataFrame()
-
-
-def delete_daily_history_rows(ids):
-    return 0
-
-
-def append_output_file_log(category: str, file_path: str, trigger: str):
-    ensure_dirs()
-
-    row = {
-        "id": now_dt().strftime("%Y%m%d%H%M%S%f"),
-        "時間": now_dt().strftime("%Y-%m-%d %H:%M:%S"),
-        "分類": category,
-        "檔名": os.path.basename(file_path),
-        "完整路徑": file_path,
-        "trigger": trigger,
-    }
-
-    new_df = pd.DataFrame([row])
-
-    if os.path.exists(OUTPUT_LOG_FILE):
-        old_df = pd.read_csv(OUTPUT_LOG_FILE, encoding="utf-8-sig")
-        out_df = pd.concat([old_df, new_df], ignore_index=True)
-    else:
-        out_df = new_df
-
-    out_df.to_csv(OUTPUT_LOG_FILE, index=False, encoding="utf-8-sig")
-
-
-def load_output_file_log() -> pd.DataFrame:
-    ensure_dirs()
-    if not os.path.exists(OUTPUT_LOG_FILE):
-        return pd.DataFrame(columns=["id", "時間", "分類", "檔名", "完整路徑", "trigger"])
-    return pd.read_csv(OUTPUT_LOG_FILE, encoding="utf-8-sig")
-
-
-def persist_dashboard_payload(
-    df4: pd.DataFrame,
-    daily_df: pd.DataFrame,
-    next_month_daily_df: pd.DataFrame,
-    month_end_df: pd.DataFrame,
-    email_html: str,
-    error_msg: Optional[str] = None,
-    trigger: str = "dashboard",
-):
-    ensure_dirs()
-
-    now = now_dt()
-    stamp = now.strftime("%Y%m%d_%H%M%S")
-    month_folder = os.path.join(SNAPSHOT_DIR, now.strftime("%Y%m"))
-    os.makedirs(month_folder, exist_ok=True)
-
-    latest_df4 = os.path.join(LATEST_DIR, "df4.csv")
-    latest_daily = os.path.join(LATEST_DIR, "daily_df.csv")
-    latest_next_daily = os.path.join(LATEST_DIR, "next_month_daily_df.csv")
-    latest_month_end = os.path.join(LATEST_DIR, "month_end_summary.csv")
-    latest_html = os.path.join(LATEST_DIR, "email_preview.html")
-    latest_meta = os.path.join(LATEST_DIR, "meta.json")
-
-    log("===== 寫入 dashboard 檔案 =====")
-    log(f"LATEST_DIR = {LATEST_DIR}")
-    log(f"latest_df4 = {latest_df4}")
-    log(f"latest_daily = {latest_daily}")
-    log(f"latest_next_daily = {latest_next_daily}")
-    log(f"latest_month_end = {latest_month_end}")
-    log(f"latest_html = {latest_html}")
-    log(f"latest_meta = {latest_meta}")
-    log(f"df4 rows = {len(df4)}")
-    log(f"daily_df rows = {len(daily_df)}")
-    log(f"next_month_daily_df rows = {len(next_month_daily_df)}")
-    log(f"month_end_df rows = {len(month_end_df)}")
-    log(f"next_month_daily_df rows = {len(next_month_daily_df)}")
-    log(f"month_end_df rows = {len(month_end_df)}")
-
-    df4.to_csv(latest_df4, index=False, encoding="utf-8-sig")
-    append_output_file_log("業績報表", latest_df4, trigger)
-
-    daily_df.to_csv(latest_daily, index=False, encoding="utf-8-sig")
-    append_output_file_log("業績報表", latest_daily, trigger)
-
-    next_month_daily_df.to_csv(latest_next_daily, index=False, encoding="utf-8-sig")
-    append_output_file_log("次月統計報表", latest_next_daily, trigger)
-
-    if month_end_df is not None and not month_end_df.empty:
-        month_end_df.to_csv(latest_month_end, index=False, encoding="utf-8-sig")
-        append_output_file_log("月底快照", latest_month_end, trigger)
-
-    with open(latest_html, "w", encoding="utf-8") as f:
-        f.write(email_html or "")
-    append_output_file_log("業績報表", latest_html, trigger)
-
-    meta = {
-        "updated_at": now.strftime("%Y-%m-%d %H:%M:%S"),
-        "df4_rows": int(len(df4)),
-        "daily_rows": int(len(daily_df)),
-        "next_month_daily_rows": int(len(next_month_daily_df)),
-        "month_end_rows": int(len(month_end_df)),
-        "error": error_msg,
-        "trigger": trigger,
-    }
-    with open(latest_meta, "w", encoding="utf-8") as f:
-        json.dump(meta, f, ensure_ascii=False, indent=2)
-    append_output_file_log("業績報表", latest_meta, trigger)
-
-    snapshot_prefix = os.path.join(month_folder, stamp)
-
-    snap_df4 = f"{snapshot_prefix}_df4.csv"
-    snap_daily = f"{snapshot_prefix}_daily_df.csv"
-    snap_next_daily = f"{snapshot_prefix}_next_month_daily_df.csv"
-    snap_month_end = f"{snapshot_prefix}_month_end_summary.csv"
-    snap_meta = f"{snapshot_prefix}_meta.json"
-    snap_html = f"{snapshot_prefix}_email_preview.html"
-
-    df4.to_csv(snap_df4, index=False, encoding="utf-8-sig")
-    append_output_file_log("業績報表", snap_df4, trigger)
-
-    daily_df.to_csv(snap_daily, index=False, encoding="utf-8-sig")
-    append_output_file_log("業績報表", snap_daily, trigger)
-
-    next_month_daily_df.to_csv(snap_next_daily, index=False, encoding="utf-8-sig")
-    append_output_file_log("次月統計報表", snap_next_daily, trigger)
-
-    if month_end_df is not None and not month_end_df.empty:
-        month_end_df.to_csv(snap_month_end, index=False, encoding="utf-8-sig")
-        append_output_file_log("月底快照", snap_month_end, trigger)
-
-    with open(snap_meta, "w", encoding="utf-8") as f:
-        json.dump(meta, f, ensure_ascii=False, indent=2)
-    append_output_file_log("業績報表", snap_meta, trigger)
-
-    with open(snap_html, "w", encoding="utf-8") as f:
-        f.write(email_html or "")
-    append_output_file_log("業績報表", snap_html, trigger)
-
-
-def generate_sales_report(send_email=False, persist_dashboard=True, trigger="dashboard"):
-    log("🔥 開始業績報表")
-
-    ensure_dirs()
-    (m_start, m_end), (n_start, n_end) = get_ranges()
-    merged = {}
-    city_errors = []
-
-    enabled_cities = [city for city in CITY_ORDER if city in ACCOUNTS]
-    missing_cities = [city for city in CITY_ORDER if city not in ACCOUNTS]
-
-    if missing_cities:
-        log(f"⚠️ ACCOUNTS 缺少城市設定，已略過：{', '.join(missing_cities)}")
-
-    if not enabled_cities:
-        error_msg = "ACCOUNTS 沒有任何可用城市設定"
-        log(f"❌ {error_msg}")
-        log("⚠️ 本次不覆蓋 latest，保留舊資料")
-
-        return {
-            "raw_df": pd.DataFrame(),
-            "df1": pd.DataFrame(),
-            "df2": pd.DataFrame(),
-            "df3": pd.DataFrame(),
-            "df4": pd.DataFrame(),
-            "daily_df": pd.DataFrame(),
-            "next_month_daily_df": pd.DataFrame(),
-            "month_end_df": pd.DataFrame(),
-            "month_end_history_df": load_month_end_history(),
-            "email_html": "",
-            "updated_at": now_dt().strftime("%Y-%m-%d %H:%M:%S"),
-            "execution_log_df": pd.DataFrame(),
-            "daily_history_df": pd.DataFrame(),
-            "output_file_log_df": load_output_file_log(),
-            "error": error_msg,
-        }
-
-        return {
-            "raw_df": pd.DataFrame(),
-            "df1": pd.DataFrame(),
-            "df2": pd.DataFrame(),
-            "df3": pd.DataFrame(),
-            "df4": empty_df4,
-            "daily_df": empty_daily,
-            "next_month_daily_df": pd.DataFrame(),
-            "month_end_df": pd.DataFrame(),
-            "month_end_history_df": load_month_end_history(),
-            "email_html": "",
-            "updated_at": now_dt().strftime("%Y-%m-%d %H:%M:%S"),
-            "execution_log_df": pd.DataFrame(),
-            "daily_history_df": pd.DataFrame(),
-            "output_file_log_df": load_output_file_log(),
-            "error": error_msg,
-        }
-
-    for city in enabled_cities:
-        log(f"===== {city} =====")
-        session = requests.Session()
-        acc = ACCOUNTS[city]
-
-        try:
-            login(session, acc["email"], acc["password"])
-            city_row_count = 0
-
-            for label, (s, e) in {
-                "本月": (m_start, m_end),
-                "下月": (n_start, n_end),
-            }.items():
-                for status in [1, 0]:
-                    for kw in get_keywords(city):
-                        url = build_url(s, e, status, kw)
-                        log(f"抓取：city={city} month={label} status={status} kw={kw} url={url}")
-
-                        res = session.get(url, headers=HEADERS, allow_redirects=True)
-                        res.raise_for_status()
-
-                        rows = parse_html(res.text)
-                        city_row_count += len(rows)
-
-                        if not rows:
-                            log(f"⚠️ {city} / {label} / status={status} / kw={kw} 沒抓到資料，HTML 長度={len(res.text)}")
-                            try:
-                                debug_dir = os.path.join(DASHBOARD_DIR, "_debug_html")
-                                os.makedirs(debug_dir, exist_ok=True)
-                                debug_name = f"{city}_{label}_status{status}_{(kw or 'ALL')}.html"
-                                debug_path = os.path.join(debug_dir, debug_name)
-                                with open(debug_path, "w", encoding="utf-8") as f:
-                                    f.write(res.text)
-                                log(f"📝 已輸出 debug html：{debug_path}")
-                                append_output_file_log("業績報表", debug_path, trigger)
-                            except Exception as dbg_e:
-                                log(f"⚠️ debug html 寫出失敗：{dbg_e}")
-
-                        for row in rows:
-                            key = (
-                                city,
-                                label,
-                                row["日期"],
-                                row["收入類型"],
-                                row["資料來源"],
-                                row["服務"],
-                                row["子項目"],
-                            )
-
-                            if key not in merged:
-                                merged[key] = {
-                                    "城市": city,
-                                    "月份": label,
-                                    "日期": row["日期"],
-                                    "收入類型": row["收入類型"],
-                                    "資料來源": row["資料來源"],
-                                    "服務": row["服務"],
-                                    "子項目": row["子項目"],
-                                    "已付款": 0,
-                                    "待付款": 0,
-                                }
-
-                            merged[key]["已付款"] += row["已付款"]
-                            merged[key]["待付款"] += row["待付款"]
-
-            if city_row_count == 0:
-                msg = f"{city}：登入成功，但沒有抓到任何表格資料"
-                city_errors.append(msg)
-                log(f"⚠️ {msg}")
-
-        except Exception as e:
-            msg = f"{city} 失敗：{e}"
-            city_errors.append(msg)
-            log(f"❌ {msg}")
-
-    raw_df = pd.DataFrame(merged.values())
-
-    if raw_df.empty:
-        error_msg = "沒有任何資料可輸出"
-        if city_errors:
-            error_msg += "；" + " / ".join(city_errors)
-
-        log(f"⚠️ {error_msg}")
-        log("⚠️ 本次不覆蓋 latest，保留舊資料")
-
-        return {
-            "raw_df": pd.DataFrame(),
-            "df1": pd.DataFrame(),
-            "df2": pd.DataFrame(),
-            "df3": pd.DataFrame(),
-            "df4": pd.DataFrame(),
-            "daily_df": pd.DataFrame(),
-            "next_month_daily_df": pd.DataFrame(),
-            "month_end_df": pd.DataFrame(),
-            "month_end_history_df": load_month_end_history(),
-            "email_html": "",
-            "updated_at": now_dt().strftime("%Y-%m-%d %H:%M:%S"),
-            "execution_log_df": pd.DataFrame(),
-            "daily_history_df": pd.DataFrame(),
-            "output_file_log_df": load_output_file_log(),
-           "error": error_msg,
-        }
-
-        return {
-            "raw_df": pd.DataFrame(),
-            "df1": pd.DataFrame(),
-            "df2": pd.DataFrame(),
-            "df3": pd.DataFrame(),
-            "df4": empty_df4,
-            "daily_df": empty_daily,
-            "next_month_daily_df": pd.DataFrame(),
-            "month_end_df": pd.DataFrame(),
-            "month_end_history_df": load_month_end_history(),
-            "email_html": "",
-            "updated_at": now_dt().strftime("%Y-%m-%d %H:%M:%S"),
-            "execution_log_df": pd.DataFrame(),
-            "daily_history_df": pd.DataFrame(),
-            "output_file_log_df": load_output_file_log(),
-            "error": error_msg,
-        }
-
-    df1 = build_region1_df(raw_df)
-    df2 = build_region2_df(raw_df)
-    df3 = build_region3_df(df2)
-    df4 = build_region4_df(df2)
-
-    hour = now_dt().hour
-
-    if trigger == "schedule":
-        if hour == 8:
-            source = "schedule-08"
-        elif hour == 18:
-            source = "schedule-18"
-        elif hour == 0:
-            source = "schedule-00"
-        else:
-            source = "schedule"
-    else:
-        source = "dashboard"
-
-    daily_df = build_daily_overview_df(df4, source=source)
-    next_month_daily_df = build_next_month_overview_df(df4, source=source)
-    month_end_df = build_month_end_summary_df(df4, source=source)
-
-    log(f"raw_df columns = {list(raw_df.columns)}")
-    log(f"raw_df 前5筆 = {raw_df.head().to_dict('records')}")
-    log(f"df1 rows = {len(df1)}")
-    log(f"df2 rows = {len(df2)}")
-    log(f"df3 rows = {len(df3)}")
-    log(f"df4 rows = {len(df4)}")
-    log(f"daily_df rows = {len(daily_df)}")
-    log(f"next_month_daily_df rows = {len(next_month_daily_df)}")
-    log(f"month_end_df rows = {len(month_end_df)}")
-
-    email_html = build_region4_email_html(df4)
-    error_msg = None if not city_errors else " / ".join(city_errors)
-
-    if persist_dashboard:
-        persist_dashboard_payload(df4, daily_df, next_month_daily_df, month_end_df, email_html, error_msg, trigger=trigger)
-
-    if send_email:
-        send_region4_email(df4)
-
-    return {
-        "raw_df": raw_df,
-        "df1": df1,
-        "df2": df2,
-        "df3": df3,
-        "df4": format_region4_for_display(df4),
-        "daily_df": daily_df,
-        "next_month_daily_df": next_month_daily_df,
-        "month_end_df": month_end_df,
-        "month_end_history_df": load_month_end_history(),
-        "email_html": email_html,
-        "updated_at": now_dt().strftime("%Y-%m-%d %H:%M:%S"),
-        "execution_log_df": pd.DataFrame(),
-        "daily_history_df": pd.DataFrame(),
-        "output_file_log_df": load_output_file_log(),
-        "error": error_msg,
-    }
-
-
-def main():
-    trigger = "schedule"
-    send_email = True
-
-    if len(os.sys.argv) >= 2:
-        trigger = os.sys.argv[1]
-
-    if len(os.sys.argv) >= 3:
-        send_email = os.sys.argv[2].lower() in ("1", "true", "yes", "y")
-
-    generate_sales_report(
-        send_email=send_email,
-        persist_dashboard=True,
-        trigger=trigger,
+def _show_csv_section(title: str, path: str, empty_msg: str):
+    st.markdown(f"### {title}")
+    df = _read_csv_safe(path)
+    if df.empty:
+        st.info(empty_msg)
+        st.caption(f"目前找不到檔案：{path}")
+        return
+    st.caption(f"來源：{path} · 載入：{len(df)} 筆 x {len(df.columns)} 欄")
+    st.dataframe(_format_report_df(df), use_container_width=True, hide_index=True)
+
+
+def render_next_month_report_page():
+    st.markdown('<div class="page-header"><div class="page-title">次月統計報表</div><div class="page-subtitle">NEXT MONTH DAILY OVERVIEW</div></div>', unsafe_allow_html=True)
+    _show_csv_section(
+        "📈 次月每日業績總覽",
+        os.path.join(LATEST_DIR, "next_month_daily_df.csv"),
+        "還沒有次月統計資料。請先到「業績報表」按「更新資料」，或確認 performance_report.py 已重新部署。",
     )
 
 
-if __name__ == "__main__":
-    main()
+def render_month_end_snapshot_page():
+    st.markdown('<div class="page-header"><div class="page-title">月底快照</div><div class="page-subtitle">MONTH END SNAPSHOT</div></div>', unsafe_allow_html=True)
+    _show_csv_section(
+        "📌 月底快照歷史",
+        os.path.join(DAILY_HISTORY_DIR, "month_end_summary.csv"),
+        "目前還沒有月底快照。快照只會在每個月最後一天更新資料時寫入。",
+    )
+    _show_csv_section(
+        "📌 最近一次月底快照",
+        os.path.join(LATEST_DIR, "month_end_summary.csv"),
+        "目前 latest 裡還沒有月底快照檔。",
+    )
+
+
+def render_performance_report_page():
+    # 保留原本 dashboard_main 的業績報表畫面。
+    render_page("業績報表")
+
+    # 實務上常會直接停在「業績報表」頁，所以把次月與月底快照
+    # 直接接在同一頁下方，不需要另外找頁籤才看得到。
+    st.markdown("---")
+    render_next_month_report_page()
+
+    st.markdown("---")
+    render_month_end_snapshot_page()
+
+
+if st.session_state.page == "業績報表":
+    render_performance_report_page()
+elif st.session_state.page == "次月統計報表":
+    render_next_month_report_page()
+elif st.session_state.page == "月底快照":
+    render_month_end_snapshot_page()
+else:
+    render_page(st.session_state.page)
