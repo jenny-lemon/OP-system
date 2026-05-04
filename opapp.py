@@ -361,16 +361,9 @@ def _delete_rows_from_csv(path: str, selected_ids) -> bool:
 
 
 def _show_deletable_csv_section(title: str, path: str, empty_msg: str, key_prefix: str, fallback_df: pd.DataFrame | None = None, source_note: str | None = None):
+    # 當月/次月追蹤只讀取 performance_report.py 已寫入的 CSV。
+    # 不在畫面 render 時重新從 df4.csv 寫入，避免上方摘要與下方追蹤發生雙寫入/去重不同步。
     df = _read_csv_safe(path)
-
-    # 如果檔案不存在，但有 fallback，直接補寫成正式檔案，避免畫面顯示 latest-df4。
-    if df.empty and fallback_df is not None and not fallback_df.empty:
-        try:
-            os.makedirs(os.path.dirname(path), exist_ok=True)
-            fallback_df.to_csv(path, index=False, encoding="utf-8-sig")
-            df = _read_csv_safe(path)
-        except Exception:
-            df = fallback_df.copy()
 
     if df.empty:
         st.info(empty_msg)
@@ -558,7 +551,6 @@ def _sync_period_csv_from_df4(path: str, period_label: str) -> pd.DataFrame:
 
 def _show_period_section(title: str, filename: str, period_label: str):
     path = os.path.join(LATEST_DIR, filename)
-    _sync_period_csv_from_df4(path, period_label)
     _show_deletable_csv_section(
         title=title,
         path=path,
@@ -681,9 +673,11 @@ def render_monthly_tracking_tabs():
     tab_current, tab_next, tab_snapshot = st.tabs(["當月每日業績", "次月每日業績", "月底快照"])
 
     with tab_current:
+        st.caption("資料來源：上方各區月度摘要（df4.csv）的本月加總；每次『更新資料』會新增一筆，舊紀錄會保留，除非手動勾選刪除。")
         _show_period_section("當月每日業績總覽", "daily_df.csv", "本月")
 
     with tab_next:
+        st.caption("資料來源：上方各區月度摘要（df4.csv）的次月加總；每次『更新資料』會新增一筆，舊紀錄會保留，除非手動勾選刪除。")
         _show_period_section("次月每日業績總覽", "next_month_daily_df.csv", "次月")
 
     with tab_snapshot:
