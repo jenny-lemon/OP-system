@@ -319,11 +319,6 @@ div[data-testid="stAlert"] { border-radius: 9px !important; font-size: 13px !imp
 div[data-testid="stCheckbox"] label { color: #374151 !important; font-size: 13px !important; font-weight: 500 !important; }
 h3 { color: #0f172a !important; font-size: 22px !important; font-weight: 700 !important; }
 
-/* ─── Footer ─── */
-.footer-cap {
-    text-align: center; font-size: 11px; color: #94a3b8; font-weight: 500;
-    padding-top: 24px; border-top: 1px solid #e8ecf0; margin-top: 28px;
-}
 </style>
 """, unsafe_allow_html=True)
 
@@ -744,7 +739,6 @@ def _render_page_without_builtin_daily_overview():
 
 def render_email_preview_section():
     html_path = os.path.join(LATEST_DIR, "email_preview.html")
-    st.markdown("---")
     with st.expander("📧 信件預覽", expanded=False):
         if not os.path.exists(html_path):
             st.info("目前沒有信件預覽。請先按『更新資料』產生 email_preview.html。")
@@ -762,7 +756,6 @@ def render_email_preview_section():
 def render_monthly_tracking_tabs():
     # 取代 dashboard_main 原本單獨的「當月每日業績總覽」。
     # 三個區塊整併在同一個頁籤區，且各自保留刪除功能。
-    st.markdown("---")
     st.markdown(
         '<div class="page-header"><div class="page-title">月度追蹤</div>'
         '<div class="page-subtitle">CURRENT / NEXT MONTH / SNAPSHOT</div></div>',
