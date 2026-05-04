@@ -397,12 +397,20 @@ def _show_csv_section(title: str, path: str, empty_msg: str):
 
 
 def _get_latest_payload_time() -> datetime:
-    """Use the report update time as the row timestamp.
+    """Use df4.csv modified time as the actual update timestamp.
 
-    This prevents adding a new row just because the user switches tabs, while
-    still letting the monthly-tracking tabs repair missing daily/next rows when
-    an older deployment failed to write them.
+    The monthly tracking rows are generated from latest/df4.csv. Therefore the
+    safest timestamp is the df4 file mtime, not meta.json. Some deployments can
+    leave meta.json stale; when that happened, the app kept trying to use the
+    old 11:34 id and did not add a new 12:00 row.
     """
+    df4_path = os.path.join(LATEST_DIR, "df4.csv")
+    try:
+        if os.path.exists(df4_path):
+            return datetime.fromtimestamp(os.path.getmtime(df4_path), TZ_TAIPEI)
+    except Exception:
+        pass
+
     meta_path = os.path.join(LATEST_DIR, "meta.json")
     try:
         if os.path.exists(meta_path):
@@ -411,13 +419,6 @@ def _get_latest_payload_time() -> datetime:
             updated_at = str(meta.get("updated_at") or "").strip()
             if updated_at:
                 return datetime.strptime(updated_at, "%Y-%m-%d %H:%M:%S").replace(tzinfo=TZ_TAIPEI)
-    except Exception:
-        pass
-
-    df4_path = os.path.join(LATEST_DIR, "df4.csv")
-    try:
-        if os.path.exists(df4_path):
-            return datetime.fromtimestamp(os.path.getmtime(df4_path), TZ_TAIPEI)
     except Exception:
         pass
 
@@ -527,17 +528,17 @@ def _sync_period_csv_from_df4(path: str, period_label: str) -> pd.DataFrame:
     return out.reset_index(drop=True)
 
 def _show_period_section(title: str, filename: str, period_label: str):
+    # 這裡只顯示 performance_report.py 寫出的正式歷史檔，不在畫面端自行補寫資料。
+    # 按「更新資料」時，performance_report.py 會同時 append 本月與次月各一列。
     path = os.path.join(LATEST_DIR, filename)
-    synced_df = _sync_period_csv_from_df4(path, period_label)
     _show_deletable_csv_section(
         title=title,
         path=path,
-        empty_msg="目前沒有資料。請先按『更新資料』，並確認 performance_report.py 已重新部署。",
+        empty_msg="目前沒有資料。請先按『更新資料』。",
         key_prefix=f"period_{period_label}",
-        fallback_df=synced_df,
+        fallback_df=None,
         source_note=None,
     )
-
 
 def _show_month_end_snapshot_tab():
     latest_path = os.path.join(LATEST_DIR, "month_end_summary.csv")
