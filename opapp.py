@@ -360,20 +360,20 @@ def _delete_rows_from_csv(path: str, selected_ids) -> bool:
 
 
 def _show_deletable_csv_section(title: str, path: str, empty_msg: str, key_prefix: str, fallback_df: pd.DataFrame | None = None, source_note: str | None = None):
-    st.markdown(f"### {title}")
     df = _read_csv_safe(path)
+
+    # 如果檔案不存在，但有 fallback，直接補寫成正式檔案，避免畫面顯示 latest-df4。
     if df.empty and fallback_df is not None and not fallback_df.empty:
-        df = fallback_df
-        source_note = source_note or "來源：latest df4 即時計算"
-    else:
-        source_note = source_note or f"來源：{path}"
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            fallback_df.to_csv(path, index=False, encoding="utf-8-sig")
+            df = _read_csv_safe(path)
+        except Exception:
+            df = fallback_df.copy()
 
     if df.empty:
         st.info(empty_msg)
-        st.caption(f"目前找不到檔案：{path}")
         return
-
-    st.caption(f"{source_note} · 載入：{len(df)} 筆 x {len(df.columns)} 欄")
 
     if "id" in df.columns and os.path.exists(path):
         options = df["id"].astype(str).tolist()
@@ -390,7 +390,6 @@ def _show_deletable_csv_section(title: str, path: str, empty_msg: str, key_prefi
                 st.warning("沒有刪除任何資料，請先勾選紀錄。")
 
     st.dataframe(_format_report_df(df), use_container_width=True, hide_index=True)
-
 
 def _show_csv_section(title: str, path: str, empty_msg: str):
     _show_deletable_csv_section(title, path, empty_msg, key_prefix=title.replace(" ", "_"))
@@ -426,8 +425,8 @@ def _build_overview_from_df4(period_label: str) -> pd.DataFrame:
         return row.iloc[0][col]
 
     row = {
-        "id": f"{now_obj.strftime('%Y%m%d%H%M%S')}_{period_label}_fallback",
-        "來源": "latest-df4",
+        "id": f"{now_obj.strftime('%Y%m%d%H%M%S')}_{period_label}",
+        "來源": "dashboard",
         "統計月份": stat_month,
         "日期": now_obj.strftime("%Y/%m/%d %H:%M"),
         "台北業績": get_val("台北", amount_col),
