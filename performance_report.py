@@ -511,6 +511,7 @@ def _build_period_overview_df(
     ratio_col: str,
     latest_filename: str,
     period_label: str,
+    run_dt: Optional[datetime] = None,
 ) -> pd.DataFrame:
     cols = [
         "id",
@@ -530,7 +531,7 @@ def _build_period_overview_df(
         return pd.DataFrame(columns=cols)
 
     latest_path = os.path.join(LATEST_DIR, latest_filename)
-    now_obj = now_dt()
+    now_obj = run_dt or now_dt()
     row_id = f"{now_obj.strftime('%Y%m%d%H%M%S')}_{period_label}"
     date_text = now_obj.strftime("%Y/%m/%d %H:%M")
 
@@ -594,7 +595,7 @@ def _build_period_overview_df(
     return out[cols]
 
 
-def build_daily_overview_df(df4: pd.DataFrame, source: str = "dashboard") -> pd.DataFrame:
+def build_daily_overview_df(df4: pd.DataFrame, source: str = "dashboard", run_dt: Optional[datetime] = None) -> pd.DataFrame:
     return _build_period_overview_df(
         df4=df4,
         source=source,
@@ -602,10 +603,11 @@ def build_daily_overview_df(df4: pd.DataFrame, source: str = "dashboard") -> pd.
         ratio_col="本月佔比",
         latest_filename="daily_df.csv",
         period_label="本月",
+        run_dt=run_dt,
     )
 
 
-def build_next_month_overview_df(df4: pd.DataFrame, source: str = "dashboard") -> pd.DataFrame:
+def build_next_month_overview_df(df4: pd.DataFrame, source: str = "dashboard", run_dt: Optional[datetime] = None) -> pd.DataFrame:
     return _build_period_overview_df(
         df4=df4,
         source=source,
@@ -613,6 +615,7 @@ def build_next_month_overview_df(df4: pd.DataFrame, source: str = "dashboard") -
         ratio_col="次月佔比",
         latest_filename="next_month_daily_df.csv",
         period_label="次月",
+        run_dt=run_dt,
     )
 
 
@@ -1113,8 +1116,11 @@ def generate_sales_report(send_email=False, persist_dashboard=True, trigger="das
     else:
         source = "dashboard"
 
-    daily_df = build_daily_overview_df(df4, source=source)
-    next_month_daily_df = build_next_month_overview_df(df4, source=source)
+    # 單次「更新資料」必須同時新增本月與次月各一列，且使用同一個時間戳。
+    # 不用舊 daily_df/df4 的 id 判斷是否新增；舊資料一律保留，只有使用者勾選刪除才會移除。
+    run_dt = now_dt()
+    daily_df = build_daily_overview_df(df4, source=source, run_dt=run_dt)
+    next_month_daily_df = build_next_month_overview_df(df4, source=source, run_dt=run_dt)
     month_end_df = build_month_end_summary_df(df4, source=source)
 
     log(f"raw_df columns = {list(raw_df.columns)}")
