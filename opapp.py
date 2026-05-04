@@ -487,11 +487,91 @@ def _show_month_end_snapshot_tab():
         )
 
 
+
+def _render_page_without_builtin_daily_overview():
+    """Render the original performance page, but suppress its old daily overview block.
+
+    The app now owns a single combined monthly-tracking area with tabs for
+    current month / next month / month-end snapshot, so the old standalone
+    "當月每日業績總覽" block from dashboard_main should not be shown twice.
+    """
+    original = {
+        "markdown": st.markdown,
+        "caption": st.caption,
+        "multiselect": st.multiselect,
+        "button": st.button,
+        "dataframe": st.dataframe,
+        "info": st.info,
+        "warning": st.warning,
+        "success": st.success,
+        "write": st.write,
+    }
+    skipping = {"on": False}
+
+    def should_start_skip(args, kwargs):
+        text = ""
+        if args:
+            text = str(args[0])
+        elif "body" in kwargs:
+            text = str(kwargs.get("body"))
+        return "當月每日業績總覽" in text
+
+    def patch_markdown(*args, **kwargs):
+        if should_start_skip(args, kwargs):
+            skipping["on"] = True
+            return None
+        if skipping["on"]:
+            return None
+        return original["markdown"](*args, **kwargs)
+
+    def patch_noop(name):
+        def inner(*args, **kwargs):
+            if skipping["on"]:
+                if name == "multiselect":
+                    return []
+                if name == "button":
+                    return False
+                return None
+            return original[name](*args, **kwargs)
+        return inner
+
+    try:
+        st.markdown = patch_markdown
+        st.caption = patch_noop("caption")
+        st.multiselect = patch_noop("multiselect")
+        st.button = patch_noop("button")
+        st.dataframe = patch_noop("dataframe")
+        st.info = patch_noop("info")
+        st.warning = patch_noop("warning")
+        st.success = patch_noop("success")
+        st.write = patch_noop("write")
+        render_page("業績報表")
+    finally:
+        st.markdown = original["markdown"]
+        st.caption = original["caption"]
+        st.multiselect = original["multiselect"]
+        st.button = original["button"]
+        st.dataframe = original["dataframe"]
+        st.info = original["info"]
+        st.warning = original["warning"]
+        st.success = original["success"]
+        st.write = original["write"]
+
+
 def render_monthly_tracking_tabs():
-    # dashboard_main 已經有「當月每日業績總覽」與刪除功能，這裡只補上次月與月底快照，避免畫面重複。
+    # 取代 dashboard_main 原本單獨的「當月每日業績總覽」。
+    # 三個區塊整併在同一個頁籤區，且各自保留刪除功能。
     st.markdown("---")
-    st.markdown("### 月度追蹤")
-    tab_next, tab_snapshot = st.tabs(["次月每日業績", "月底快照"])
+    st.markdown(
+        '<div class="page-header"><div class="page-title">月度追蹤</div>'
+        '<div class="page-subtitle">CURRENT / NEXT MONTH / SNAPSHOT</div></div>',
+        unsafe_allow_html=True,
+    )
+
+    tab_current, tab_next, tab_snapshot = st.tabs(["當月每日業績", "次月每日業績", "月底快照"])
+
+    with tab_current:
+        _show_period_section("當月每日業績總覽", "daily_df.csv", "本月")
 
     with tab_next:
         _show_period_section("次月每日業績總覽", "next_month_daily_df.csv", "次月")
@@ -501,7 +581,7 @@ def render_monthly_tracking_tabs():
 
 
 def render_performance_report_page():
-    render_page("業績報表")
+    _render_page_without_builtin_daily_overview()
     render_monthly_tracking_tabs()
 
 
