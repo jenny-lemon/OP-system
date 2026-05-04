@@ -504,32 +504,24 @@ def _build_overview_from_df4(period_label: str, row_dt: datetime | None = None, 
 
 
 def _sync_period_csv_from_df4(path: str, period_label: str) -> pd.DataFrame:
-    """Ensure monthly tracking contains the latest df4 row.
+    """Append the latest top-summary df4 row into monthly tracking.
 
-    df4.csv is the single source used by the top monthly summary. This function
-    runs when the monthly-tracking tabs render, so even if the backend updated
-    df4.csv but failed to append daily_df.csv / next_month_daily_df.csv, the UI
-    repairs the tracking CSV from the same top-summary numbers.
+    Rule: the top table (latest/df4.csv + latest/meta.json updated_at) is the
+    only source of truth. Every distinct 更新資料 timestamp shown in the blue
+    banner must appear once in 當月每日業績 and once in 次月每日業績.
 
-    It appends at most one row per dashboard update event. Re-rendering the page
-    will not duplicate the row. Old rows are preserved unless deleted manually.
+    Old rows are never deleted here. They are kept until the user manually
+    selects and deletes them in the UI.
     """
-    ns = _get_latest_df4_mtime_ns()
     row_dt = _get_latest_payload_time()
-    # Use a stable id for the current df4 file. If meta time is visible to the
-    # user, keep it readable; include df4 mtime ns to distinguish repeated runs.
-    visible_key = row_dt.strftime("%Y%m%d%H%M%S")
-    run_key = f"{visible_key}_{ns}" if ns else visible_key
+
+    # Use the same timestamp the user sees in 最新更新時間 as the event key.
+    # Do NOT use df4 mtime as the primary key, because some runs can refresh
+    # meta/latest time while leaving df4 mtime unchanged when values are equal.
+    run_key = row_dt.strftime("%Y%m%d%H%M%S")
 
     new_df = _build_overview_from_df4(period_label, row_dt=row_dt, run_key=run_key)
     if new_df.empty:
-        return _read_csv_safe(path)
-
-    # Keep current-month rows even if the value is zero in rare edge cases; only
-    # skip rows where every amount is truly blank/zero and df4 has no usable data.
-    amount_cols = ["台北業績", "台中業績", "桃園業績", "新竹業績", "高雄業績", "全區合計"]
-    has_any_amount = any(pd.to_numeric(new_df[c], errors="coerce").fillna(0).iloc[0] != 0 for c in amount_cols)
-    if not has_any_amount and _read_csv_safe(os.path.join(LATEST_DIR, "df4.csv")).empty:
         return _read_csv_safe(path)
 
     os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -544,23 +536,11 @@ def _sync_period_csv_from_df4(path: str, period_label: str) -> pd.DataFrame:
         old_df = old_df[new_df.columns].copy()
 
         new_id = str(new_df.iloc[0]["id"])
-        new_date = pd.to_datetime(str(new_df.iloc[0]["日期"]), errors="coerce")
-        new_total = pd.to_numeric(pd.Series([new_df.iloc[0]["全區合計"]]), errors="coerce").fillna(-999999999).iloc[0]
 
-        already_written = False
+        # Only exact same update id is considered duplicate. Do not compare by
+        # amount or a time window: when numbers are unchanged, the user still
+        # expects each 更新資料 run to leave a trace.
         if "id" in old_df.columns and new_id in old_df["id"].astype(str).tolist():
-            already_written = True
-
-        # If performance_report.py already wrote the same update using its own
-        # id, avoid a duplicate by comparing visible update time and total.
-        if not already_written and pd.notna(new_date) and "日期" in old_df.columns and "全區合計" in old_df.columns:
-            old_dates = pd.to_datetime(old_df["日期"], errors="coerce")
-            old_total = pd.to_numeric(old_df["全區合計"], errors="coerce").fillna(-999999998)
-            close_time = (old_dates - new_date).abs() <= pd.Timedelta(minutes=3)
-            same_total = old_total == new_total
-            already_written = bool((close_time & same_total).any())
-
-        if already_written:
             out = old_df
         else:
             out = pd.concat([new_df, old_df], ignore_index=True)
