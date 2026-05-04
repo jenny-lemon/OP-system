@@ -532,8 +532,8 @@ def _build_period_overview_df(
 
     latest_path = os.path.join(LATEST_DIR, latest_filename)
     now_obj = run_dt or now_dt()
-    row_id = f"{now_obj.strftime('%Y%m%d%H%M%S')}_{period_label}"
-    date_text = now_obj.strftime("%Y/%m/%d %H:%M")
+    row_id = f"{now_obj.strftime('%Y%m%d%H%M%S%f')}_{period_label}"
+    date_text = now_obj.strftime("%Y/%m/%d %H:%M:%S")
 
     if period_label == "次月":
         y, m = now_obj.year, now_obj.month
@@ -587,7 +587,7 @@ def _build_period_overview_df(
 
     # 保留既有歷史資料，不因舊資料缺少「統計月份」欄位而被清掉。
     # 若要刪除舊紀錄，請在 OP app 介面勾選刪除。
-    out["_sort_dt"] = pd.to_datetime(out["日期"], format="%Y/%m/%d %H:%M", errors="coerce")
+    out["_sort_dt"] = pd.to_datetime(out["日期"], errors="coerce")
     out = out.sort_values(["_sort_dt", "id"], ascending=[False, False]).drop(columns=["_sort_dt"])
     out = out.reset_index(drop=True)
 
@@ -854,9 +854,15 @@ def persist_dashboard_payload(
     log(f"latest_html = {latest_html}")
     log(f"latest_meta = {latest_meta}")
     log(f"df4 rows = {len(df4)}")
+
+    # IMPORTANT: 每次 generate_sales_report() 被執行，都必須 append 本月與次月各一列。
+    # 不在這裡做任何去重、不用舊 id 判斷、不用畫面端 fallback。
+    # 這樣同一分鐘內連按兩次「更新資料」也會留下兩次紀錄。
+    persist_run_dt = now_dt()
+    daily_df = build_daily_overview_df(df4, source=trigger if trigger != "dashboard" else "dashboard", run_dt=persist_run_dt)
+    next_month_daily_df = build_next_month_overview_df(df4, source=trigger if trigger != "dashboard" else "dashboard", run_dt=persist_run_dt)
+
     log(f"daily_df rows = {len(daily_df)}")
-    log(f"next_month_daily_df rows = {len(next_month_daily_df)}")
-    log(f"month_end_df rows = {len(month_end_df)}")
     log(f"next_month_daily_df rows = {len(next_month_daily_df)}")
     log(f"month_end_df rows = {len(month_end_df)}")
 
