@@ -4,20 +4,44 @@ import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
 from datetime import datetime, timedelta, timezone
-# Patch performance_report before dashboard_main is imported.
-# dashboard_main may import generate_sales_report directly; patching here ensures
-# every press of 「更新資料」 writes latest/df4.csv, latest/daily_df.csv,
-# latest/next_month_daily_df.csv and latest/meta.json before the lower monthly
-# tracking section reads them.
+
+# 重要：一定要在 import dashboard_main 之前 patch performance_report。
+# dashboard_main 的「更新資料」可能只更新畫面上的 session result，
+# 沒有把最新 df4/meta/daily csv 寫回 dashboard_data/latest。
+# 月度追蹤是讀 latest/*.csv，所以這裡強制所有更新資料都 persist。
 import performance_report as _performance_report
 
 _ORIGINAL_GENERATE_SALES_REPORT = _performance_report.generate_sales_report
 
-
 def _generate_sales_report_force_persist(*args, **kwargs):
     kwargs["persist_dashboard"] = True
-    return _ORIGINAL_GENERATE_SALES_REPORT(*args, **kwargs)
+    result = _ORIGINAL_GENERATE_SALES_REPORT(*args, **kwargs)
 
+    # 保險：若 dashboard_main 傳入的參數或舊版 performance_report 沒有落檔，
+    # 這裡再用本次 result 補寫一次 latest 檔案。
+    try:
+        df4 = result.get("df4")
+        email_html = result.get("email_html", "")
+        error_msg = result.get("error")
+        trigger = kwargs.get("trigger", "dashboard")
+        if df4 is not None and not df4.empty:
+            daily_df = result.get("daily_df")
+            next_month_daily_df = result.get("next_month_daily_df")
+            month_end_df = result.get("month_end_df")
+            _performance_report.persist_dashboard_payload(
+                df4=df4,
+                daily_df=daily_df if daily_df is not None else pd.DataFrame(),
+                next_month_daily_df=next_month_daily_df if next_month_daily_df is not None else pd.DataFrame(),
+                month_end_df=month_end_df if month_end_df is not None else pd.DataFrame(),
+                email_html=email_html,
+                error_msg=error_msg,
+                trigger=trigger,
+            )
+    except Exception as e:
+        # 不讓補寫失敗中斷主畫面，但會顯示錯誤，避免靜默失敗。
+        st.warning(f"更新資料已完成，但 latest 檔案補寫失敗：{e}")
+
+    return result
 
 _performance_report.generate_sales_report = _generate_sales_report_force_persist
 
@@ -28,6 +52,8 @@ st.set_page_config(
     page_icon="🍋",
     layout="wide",
 )
+
+OPAPP_VERSION = "2026-05-04-force-persist-v1"
 
 TZ_TAIPEI = timezone(timedelta(hours=8))
 
@@ -294,9 +320,10 @@ div[data-testid="stCheckbox"] label { color: #374151 !important; font-size: 13px
 h3 { color: #0f172a !important; font-size: 22px !important; font-weight: 700 !important; }
 
 /* ─── Footer ─── */
-.footer-cap { display: none !important; }
-/* Remove empty white spacer cards left by the suppressed built-in email/footer area. */
-div[data-testid="stVerticalBlock"] > div:empty { display: none !important; height: 0 !important; margin: 0 !important; padding: 0 !important; }
+.footer-cap {
+    text-align: center; font-size: 11px; color: #94a3b8; font-weight: 500;
+    padding-top: 24px; border-top: 1px solid #e8ecf0; margin-top: 28px;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -658,16 +685,6 @@ def _render_page_without_builtin_daily_overview():
         return "當月每日業績總覽" in text
 
     def patch_markdown(*args, **kwargs):
-        text = ""
-        if args:
-            text = str(args[0])
-        elif "body" in kwargs:
-            text = str(kwargs.get("body"))
-
-        # Hide the original footer and any built-in email-preview shell from dashboard_main.
-        if "Lemon Clean Scheduler Console" in text or "footer-cap" in text or "信件預覽" in text:
-            return None
-
         if should_start_skip(args, kwargs):
             skipping["on"] = True
             return None
@@ -745,6 +762,7 @@ def render_email_preview_section():
 def render_monthly_tracking_tabs():
     # 取代 dashboard_main 原本單獨的「當月每日業績總覽」。
     # 三個區塊整併在同一個頁籤區，且各自保留刪除功能。
+    st.markdown("---")
     st.markdown(
         '<div class="page-header"><div class="page-title">月度追蹤</div>'
         '<div class="page-subtitle">CURRENT / NEXT MONTH / SNAPSHOT</div></div>',
