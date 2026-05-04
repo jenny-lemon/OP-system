@@ -583,8 +583,9 @@ def _build_period_overview_df(
     }
 
     out = pd.concat([old_df[cols], pd.DataFrame([new_row])], ignore_index=True)
-    out = out[out["統計月份"].astype(str) == stat_month].copy()
 
+    # 保留既有歷史資料，不因舊資料缺少「統計月份」欄位而被清掉。
+    # 若要刪除舊紀錄，請在 OP app 介面勾選刪除。
     out["_sort_dt"] = pd.to_datetime(out["日期"], format="%Y/%m/%d %H:%M", errors="coerce")
     out = out.sort_values(["_sort_dt", "id"], ascending=[False, False]).drop(columns=["_sort_dt"])
     out = out.reset_index(drop=True)
