@@ -1,3 +1,5 @@
+import os
+import pandas as pd
 import streamlit as st
 from datetime import datetime, timedelta, timezone
 from dashboard_main import render_page
@@ -14,6 +16,7 @@ TOP_PAGES = [
     ("主控表",       "📋"),
     ("業績報表",     "💹"),
     ("次月統計報表", "📈"),
+    ("月底快照",     "📌"),
     ("上下半月訂單", "🧾"),
     ("手動執行",     "▶️"),
     ("Log 監控",    "📄"),
@@ -308,4 +311,72 @@ for i, (label, icon) in enumerate(TOP_PAGES):
 st.markdown("</div>", unsafe_allow_html=True)
 
 # ── Render page ───────────────────────────────────────────────────────────────
-render_page(st.session_state.page)
+DASHBOARD_DIR = os.path.join(".", "dashboard_data")
+LATEST_DIR = os.path.join(DASHBOARD_DIR, "latest")
+DAILY_HISTORY_DIR = os.path.join(DASHBOARD_DIR, "daily_overview_history")
+
+
+def _read_csv_safe(path: str) -> pd.DataFrame:
+    if not os.path.exists(path):
+        return pd.DataFrame()
+    try:
+        return pd.read_csv(path, encoding="utf-8-sig")
+    except Exception:
+        try:
+            return pd.read_csv(path)
+        except Exception:
+            return pd.DataFrame()
+
+
+def _format_report_df(df: pd.DataFrame) -> pd.DataFrame:
+    out = df.copy()
+    for col in out.columns:
+        col_text = str(col)
+        if any(k in col_text for k in ["業績", "合計", "總業績", "加總"]):
+            out[col] = pd.to_numeric(out[col], errors="coerce").fillna(0).astype(int).map(lambda x: f"{x:,}")
+        if "佔比" in col_text:
+            nums = pd.to_numeric(out[col], errors="coerce")
+            out[col] = nums.map(lambda x: "" if pd.isna(x) else f"{x:.2%}")
+    return out
+
+
+def _show_csv_section(title: str, path: str, empty_msg: str):
+    st.markdown(f"### {title}")
+    df = _read_csv_safe(path)
+    if df.empty:
+        st.info(empty_msg)
+        st.caption(f"目前找不到檔案：{path}")
+        return
+    st.caption(f"來源：{path} · 載入：{len(df)} 筆 x {len(df.columns)} 欄")
+    st.dataframe(_format_report_df(df), use_container_width=True, hide_index=True)
+
+
+def render_next_month_report_page():
+    st.markdown('<div class="page-header"><div class="page-title">次月統計報表</div><div class="page-subtitle">NEXT MONTH DAILY OVERVIEW</div></div>', unsafe_allow_html=True)
+    _show_csv_section(
+        "📈 次月每日業績總覽",
+        os.path.join(LATEST_DIR, "next_month_daily_df.csv"),
+        "還沒有次月統計資料。請先到「業績報表」按「更新資料」，或確認 performance_report.py 已重新部署。",
+    )
+
+
+def render_month_end_snapshot_page():
+    st.markdown('<div class="page-header"><div class="page-title">月底快照</div><div class="page-subtitle">MONTH END SNAPSHOT</div></div>', unsafe_allow_html=True)
+    _show_csv_section(
+        "📌 月底快照歷史",
+        os.path.join(DAILY_HISTORY_DIR, "month_end_summary.csv"),
+        "目前還沒有月底快照。快照只會在每個月最後一天更新資料時寫入。",
+    )
+    _show_csv_section(
+        "📌 最近一次月底快照",
+        os.path.join(LATEST_DIR, "month_end_summary.csv"),
+        "目前 latest 裡還沒有月底快照檔。",
+    )
+
+
+if st.session_state.page == "次月統計報表":
+    render_next_month_report_page()
+elif st.session_state.page == "月底快照":
+    render_month_end_snapshot_page()
+else:
+    render_page(st.session_state.page)
