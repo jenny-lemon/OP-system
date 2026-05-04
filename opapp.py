@@ -361,10 +361,18 @@ def _delete_rows_from_csv(path: str, selected_ids) -> bool:
     return True
 
 
-def _show_deletable_csv_section(title: str, path: str, empty_msg: str, key_prefix: str, fallback_df: pd.DataFrame | None = None, source_note: str | None = None):
-    # 當月/次月追蹤只讀取 performance_report.py 已寫入的 CSV。
-    # 不在畫面 render 時重新從 df4.csv 寫入，避免上方摘要與下方追蹤發生雙寫入/去重不同步。
-    df = _read_csv_safe(path)
+def _show_deletable_csv_section(
+    title: str,
+    path: str,
+    empty_msg: str,
+    key_prefix: str,
+    fallback_df: pd.DataFrame | None = None,
+    source_note: str | None = None,
+    display_df: pd.DataFrame | None = None,
+):
+    # 預設讀 CSV；當月/次月追蹤會傳入 display_df，確保畫面直接使用
+    # latest/df4.csv 補出的最新列，不會因 CSV 寫入或快取問題顯示舊資料。
+    df = display_df.copy() if display_df is not None else _read_csv_safe(path)
 
     if df.empty:
         st.info(empty_msg)
@@ -504,55 +512,55 @@ def _build_overview_from_df4(period_label: str, row_dt: datetime | None = None, 
 
 
 def _sync_period_csv_from_df4(path: str, period_label: str) -> pd.DataFrame:
-    """Append the latest top-summary df4 row into monthly tracking.
+    """Return monthly tracking with the latest df4 row guaranteed at top.
 
-    Rule: the top table (latest/df4.csv + latest/meta.json updated_at) is the
-    only source of truth. Every distinct 更新資料 timestamp shown in the blue
-    banner must appear once in 當月每日業績 and once in 次月每日業績.
-
-    Old rows are never deleted here. They are kept until the user manually
-    selects and deletes them in the UI.
+    The top table latest/df4.csv is the source of truth. This function first
+    builds the exact row that should match the blue latest timestamp, then
+    merges it with the existing historical CSV. The returned dataframe is used
+    directly for display, so even if an old CSV was not updated by the report
+    writer, the lower table still immediately matches the top summary.
     """
     row_dt = _get_latest_payload_time()
-
-    # Use the same timestamp the user sees in 最新更新時間 as the event key.
-    # Do NOT use df4 mtime as the primary key, because some runs can refresh
-    # meta/latest time while leaving df4 mtime unchanged when values are equal.
     run_key = row_dt.strftime("%Y%m%d%H%M%S")
-
     new_df = _build_overview_from_df4(period_label, row_dt=row_dt, run_key=run_key)
+
     if new_df.empty:
         return _read_csv_safe(path)
 
     os.makedirs(os.path.dirname(path), exist_ok=True)
     old_df = _read_csv_safe(path)
 
+    cols = list(new_df.columns)
     if old_df.empty:
         out = new_df.copy()
     else:
-        for c in new_df.columns:
+        for c in cols:
             if c not in old_df.columns:
                 old_df[c] = ""
-        old_df = old_df[new_df.columns].copy()
+        old_df = old_df[cols].copy()
 
         new_id = str(new_df.iloc[0]["id"])
+        # Remove only the same event id, then put the latest df4-derived row
+        # at the top. This also repairs bad old rows with the same id.
+        if "id" in old_df.columns:
+            old_df = old_df[old_df["id"].astype(str) != new_id].copy()
+        out = pd.concat([new_df, old_df], ignore_index=True)
 
-        # Only exact same update id is considered duplicate. Do not compare by
-        # amount or a time window: when numbers are unchanged, the user still
-        # expects each 更新資料 run to leave a trace.
-        if "id" in old_df.columns and new_id in old_df["id"].astype(str).tolist():
-            out = old_df
-        else:
-            out = pd.concat([new_df, old_df], ignore_index=True)
+    if "日期" in out.columns:
+        out["_sort_dt"] = pd.to_datetime(out["日期"], errors="coerce")
+        out = out.sort_values(["_sort_dt", "id"], ascending=[False, False]).drop(columns=["_sort_dt"])
+    out = out.reset_index(drop=True)
 
-    out["_sort_dt"] = pd.to_datetime(out["日期"], errors="coerce")
-    out = out.sort_values(["_sort_dt", "id"], ascending=[False, False]).drop(columns=["_sort_dt"]).reset_index(drop=True)
-    out.to_csv(path, index=False, encoding="utf-8-sig")
+    # Best-effort persistence for history. Display does not depend on this write.
+    try:
+        out.to_csv(path, index=False, encoding="utf-8-sig")
+    except Exception as e:
+        st.warning(f"月度追蹤檔案寫入失敗，但畫面已用最新 df4 顯示：{e}")
     return out
 
 def _show_period_section(title: str, filename: str, period_label: str):
     path = os.path.join(LATEST_DIR, filename)
-    _sync_period_csv_from_df4(path, period_label)
+    display_df = _sync_period_csv_from_df4(path, period_label)
     _show_deletable_csv_section(
         title=title,
         path=path,
@@ -560,6 +568,7 @@ def _show_period_section(title: str, filename: str, period_label: str):
         key_prefix=f"period_{period_label}",
         fallback_df=None,
         source_note=None,
+        display_df=display_df,
     )
 
 def _show_month_end_snapshot_tab():
