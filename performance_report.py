@@ -45,6 +45,8 @@ LATEST_DIR = os.path.join(DASHBOARD_DIR, "latest")
 SNAPSHOT_DIR = os.path.join(DASHBOARD_DIR, "snapshots")
 EXEC_LOG_DIR = os.path.join(DASHBOARD_DIR, "execution_logs")
 DAILY_HISTORY_DIR = os.path.join(DASHBOARD_DIR, "daily_overview_history")
+NEXT_MONTH_HISTORY_DIR = os.path.join(DASHBOARD_DIR, "next_month_overview_history")
+MONTH_END_HISTORY_FILE = os.path.join(DAILY_HISTORY_DIR, "month_end_summary.csv")
 OUTPUT_LOG_FILE = os.path.join(DASHBOARD_DIR, "output_file_log.csv")
 
 
@@ -53,7 +55,7 @@ def log(msg: str):
 
 
 def ensure_dirs():
-    for p in [DASHBOARD_DIR, LATEST_DIR, SNAPSHOT_DIR, EXEC_LOG_DIR, DAILY_HISTORY_DIR]:
+    for p in [DASHBOARD_DIR, LATEST_DIR, SNAPSHOT_DIR, EXEC_LOG_DIR, DAILY_HISTORY_DIR, NEXT_MONTH_HISTORY_DIR]:
         if os.path.exists(p) and not os.path.isdir(p):
             raise RuntimeError(f"路徑存在但不是資料夾：{p}")
         os.makedirs(p, exist_ok=True)
@@ -448,8 +450,10 @@ def build_region4_df(region2_df: pd.DataFrame) -> pd.DataFrame:
         bm_cash_stored = cash_stored_df["本月加總"].sum()
         nm_cash_stored = cash_stored_df["次月加總"].sum()
 
+        # 本月/次月加總：服務業績本身，不扣家電。
+        # 家電加總欄位是 breakdown（現金收入 + 儲值金收入），可與本月/次月加總重疊。
+        # 只有「現金收入的儲值金購買」是預收款，不屬於服務業績，需排除。
         total_df = city_df[
-            ~city_df["類別"].isin(["冷氣", "洗衣機"]) &
             ~(
                 (city_df["收入類型"] == "現金收入") &
                 (city_df["類別"] == "儲值金")
@@ -497,10 +501,18 @@ def build_region4_df(region2_df: pd.DataFrame) -> pd.DataFrame:
     ]]
 
 
-def build_daily_overview_df(df4: pd.DataFrame, source: str = "dashboard") -> pd.DataFrame:
+def _build_period_overview_df(
+    df4: pd.DataFrame,
+    source: str,
+    amount_col: str,
+    ratio_col: str,
+    latest_filename: str,
+    period_label: str,
+) -> pd.DataFrame:
     cols = [
         "id",
         "來源",
+        "統計月份",
         "日期",
         "台北業績", "台北佔比",
         "台中業績", "台中佔比",
@@ -511,26 +523,35 @@ def build_daily_overview_df(df4: pd.DataFrame, source: str = "dashboard") -> pd.
     ]
 
     if df4 is None or df4.empty:
-        log("⚠️ build_daily_overview_df：df4 為空")
+        log(f"⚠️ _build_period_overview_df：df4 為空，period={period_label}")
         return pd.DataFrame(columns=cols)
 
-    latest_daily = os.path.join(LATEST_DIR, "daily_df.csv")
+    latest_path = os.path.join(LATEST_DIR, latest_filename)
     now_obj = now_dt()
-    row_id = now_obj.strftime("%Y%m%d%H%M%S")
+    row_id = f"{now_obj.strftime('%Y%m%d%H%M%S')}_{period_label}"
     date_text = now_obj.strftime("%Y/%m/%d %H:%M")
+
+    if period_label == "次月":
+        y, m = now_obj.year, now_obj.month
+        if m == 12:
+            stat_month = f"{y + 1}/01"
+        else:
+            stat_month = f"{y}/{m + 1:02d}"
+    else:
+        stat_month = now_obj.strftime("%Y/%m")
 
     def get_val(city, col):
         try:
             row = df4[df4["城市"] == city]
-            if row.empty:
+            if row.empty or col not in row.columns:
                 return 0
             return row.iloc[0][col]
         except Exception:
             return 0
 
-    if os.path.exists(latest_daily):
+    if os.path.exists(latest_path):
         try:
-            old_df = pd.read_csv(latest_daily, encoding="utf-8-sig")
+            old_df = pd.read_csv(latest_path, encoding="utf-8-sig")
         except Exception:
             old_df = pd.DataFrame(columns=cols)
     else:
@@ -543,32 +564,130 @@ def build_daily_overview_df(df4: pd.DataFrame, source: str = "dashboard") -> pd.
     new_row = {
         "id": row_id,
         "來源": source,
+        "統計月份": stat_month,
         "日期": date_text,
-        "台北業績": get_val("台北", "本月加總"),
-        "台北佔比": get_val("台北", "本月佔比"),
-        "台中業績": get_val("台中", "本月加總"),
-        "台中佔比": get_val("台中", "本月佔比"),
-        "桃園業績": get_val("桃園", "本月加總"),
-        "桃園佔比": get_val("桃園", "本月佔比"),
-        "新竹業績": get_val("新竹", "本月加總"),
-        "新竹佔比": get_val("新竹", "本月佔比"),
-        "高雄業績": get_val("高雄", "本月加總"),
-        "高雄佔比": get_val("高雄", "本月佔比"),
-        "全區合計": get_val("加總", "本月加總"),
+        "台北業績": get_val("台北", amount_col),
+        "台北佔比": get_val("台北", ratio_col),
+        "台中業績": get_val("台中", amount_col),
+        "台中佔比": get_val("台中", ratio_col),
+        "桃園業績": get_val("桃園", amount_col),
+        "桃園佔比": get_val("桃園", ratio_col),
+        "新竹業績": get_val("新竹", amount_col),
+        "新竹佔比": get_val("新竹", ratio_col),
+        "高雄業績": get_val("高雄", amount_col),
+        "高雄佔比": get_val("高雄", ratio_col),
+        "全區合計": get_val("加總", amount_col),
     }
 
     out = pd.concat([old_df[cols], pd.DataFrame([new_row])], ignore_index=True)
-
-    current_prefix = now_obj.strftime("%Y/%m")
-    out = out[out["日期"].astype(str).str.startswith(current_prefix)].copy()
+    out = out[out["統計月份"].astype(str) == stat_month].copy()
 
     out["_sort_dt"] = pd.to_datetime(out["日期"], format="%Y/%m/%d %H:%M", errors="coerce")
     out = out.sort_values(["_sort_dt", "id"], ascending=[False, False]).drop(columns=["_sort_dt"])
     out = out.reset_index(drop=True)
 
-    log(f"✅ build_daily_overview_df 完成，筆數 = {len(out)}")
+    log(f"✅ {period_label}統計報表完成，筆數 = {len(out)}")
     return out[cols]
 
+
+def build_daily_overview_df(df4: pd.DataFrame, source: str = "dashboard") -> pd.DataFrame:
+    return _build_period_overview_df(
+        df4=df4,
+        source=source,
+        amount_col="本月加總",
+        ratio_col="本月佔比",
+        latest_filename="daily_df.csv",
+        period_label="本月",
+    )
+
+
+def build_next_month_overview_df(df4: pd.DataFrame, source: str = "dashboard") -> pd.DataFrame:
+    return _build_period_overview_df(
+        df4=df4,
+        source=source,
+        amount_col="次月加總",
+        ratio_col="次月佔比",
+        latest_filename="next_month_daily_df.csv",
+        period_label="次月",
+    )
+
+
+def build_month_end_summary_df(df4: pd.DataFrame, source: str = "dashboard") -> pd.DataFrame:
+    cols = ["id", "來源", "快照日期", "城市", "當月業績", "當月佔比", "次月業績", "次月佔比", "當月總業績", "次月總業績"]
+
+    if df4 is None or df4.empty:
+        return pd.DataFrame(columns=cols)
+
+    now_obj = now_dt()
+    month_last_day = calendar.monthrange(now_obj.year, now_obj.month)[1]
+    if now_obj.day != month_last_day:
+        return pd.DataFrame(columns=cols)
+
+    snapshot_date = now_obj.strftime("%Y/%m/%d")
+    row_id_prefix = now_obj.strftime("%Y%m%d")
+
+    def get_val(city, col):
+        try:
+            row = df4[df4["城市"] == city]
+            if row.empty or col not in row.columns:
+                return 0
+            return row.iloc[0][col]
+        except Exception:
+            return 0
+
+    current_total = get_val("加總", "本月加總")
+    next_total = get_val("加總", "次月加總")
+
+    rows = []
+    for city in CITY_ORDER + ["加總"]:
+        rows.append({
+            "id": f"{row_id_prefix}_{city}",
+            "來源": source,
+            "快照日期": snapshot_date,
+            "城市": city,
+            "當月業績": get_val(city, "本月加總"),
+            "當月佔比": get_val(city, "本月佔比"),
+            "次月業績": get_val(city, "次月加總"),
+            "次月佔比": get_val(city, "次月佔比"),
+            "當月總業績": current_total,
+            "次月總業績": next_total,
+        })
+
+    out = pd.DataFrame(rows, columns=cols)
+
+    if os.path.exists(MONTH_END_HISTORY_FILE):
+        try:
+            old_df = pd.read_csv(MONTH_END_HISTORY_FILE, encoding="utf-8-sig")
+        except Exception:
+            old_df = pd.DataFrame(columns=cols)
+    else:
+        old_df = pd.DataFrame(columns=cols)
+
+    for c in cols:
+        if c not in old_df.columns:
+            old_df[c] = ""
+
+    old_df = old_df[old_df["快照日期"].astype(str) != snapshot_date].copy()
+    history_df = pd.concat([old_df[cols], out], ignore_index=True)
+    history_df.to_csv(MONTH_END_HISTORY_FILE, index=False, encoding="utf-8-sig")
+    append_output_file_log("月底快照", MONTH_END_HISTORY_FILE, source)
+
+    month_folder = os.path.join(SNAPSHOT_DIR, now_obj.strftime("%Y%m"))
+    os.makedirs(month_folder, exist_ok=True)
+    snap_path = os.path.join(month_folder, f"{now_obj.strftime('%Y%m%d')}_month_end_summary.csv")
+    out.to_csv(snap_path, index=False, encoding="utf-8-sig")
+    append_output_file_log("月底快照", snap_path, source)
+
+    log(f"✅ 月底快照已記錄：{snapshot_date}")
+    return out
+
+
+def load_month_end_history() -> pd.DataFrame:
+    ensure_dirs()
+    cols = ["id", "來源", "快照日期", "城市", "當月業績", "當月佔比", "次月業績", "次月佔比", "當月總業績", "次月總業績"]
+    if not os.path.exists(MONTH_END_HISTORY_FILE):
+        return pd.DataFrame(columns=cols)
+    return pd.read_csv(MONTH_END_HISTORY_FILE, encoding="utf-8-sig")
 
 def format_region4_for_display(df4: pd.DataFrame) -> pd.DataFrame:
     out = df4.copy()
@@ -699,6 +818,8 @@ def load_output_file_log() -> pd.DataFrame:
 def persist_dashboard_payload(
     df4: pd.DataFrame,
     daily_df: pd.DataFrame,
+    next_month_daily_df: pd.DataFrame,
+    month_end_df: pd.DataFrame,
     email_html: str,
     error_msg: Optional[str] = None,
     trigger: str = "dashboard",
@@ -712,6 +833,8 @@ def persist_dashboard_payload(
 
     latest_df4 = os.path.join(LATEST_DIR, "df4.csv")
     latest_daily = os.path.join(LATEST_DIR, "daily_df.csv")
+    latest_next_daily = os.path.join(LATEST_DIR, "next_month_daily_df.csv")
+    latest_month_end = os.path.join(LATEST_DIR, "month_end_summary.csv")
     latest_html = os.path.join(LATEST_DIR, "email_preview.html")
     latest_meta = os.path.join(LATEST_DIR, "meta.json")
 
@@ -719,16 +842,29 @@ def persist_dashboard_payload(
     log(f"LATEST_DIR = {LATEST_DIR}")
     log(f"latest_df4 = {latest_df4}")
     log(f"latest_daily = {latest_daily}")
+    log(f"latest_next_daily = {latest_next_daily}")
+    log(f"latest_month_end = {latest_month_end}")
     log(f"latest_html = {latest_html}")
     log(f"latest_meta = {latest_meta}")
     log(f"df4 rows = {len(df4)}")
     log(f"daily_df rows = {len(daily_df)}")
+    log(f"next_month_daily_df rows = {len(next_month_daily_df)}")
+    log(f"month_end_df rows = {len(month_end_df)}")
+    log(f"next_month_daily_df rows = {len(next_month_daily_df)}")
+    log(f"month_end_df rows = {len(month_end_df)}")
 
     df4.to_csv(latest_df4, index=False, encoding="utf-8-sig")
     append_output_file_log("業績報表", latest_df4, trigger)
 
     daily_df.to_csv(latest_daily, index=False, encoding="utf-8-sig")
     append_output_file_log("業績報表", latest_daily, trigger)
+
+    next_month_daily_df.to_csv(latest_next_daily, index=False, encoding="utf-8-sig")
+    append_output_file_log("次月統計報表", latest_next_daily, trigger)
+
+    if month_end_df is not None and not month_end_df.empty:
+        month_end_df.to_csv(latest_month_end, index=False, encoding="utf-8-sig")
+        append_output_file_log("月底快照", latest_month_end, trigger)
 
     with open(latest_html, "w", encoding="utf-8") as f:
         f.write(email_html or "")
@@ -738,6 +874,8 @@ def persist_dashboard_payload(
         "updated_at": now.strftime("%Y-%m-%d %H:%M:%S"),
         "df4_rows": int(len(df4)),
         "daily_rows": int(len(daily_df)),
+        "next_month_daily_rows": int(len(next_month_daily_df)),
+        "month_end_rows": int(len(month_end_df)),
         "error": error_msg,
         "trigger": trigger,
     }
@@ -749,6 +887,8 @@ def persist_dashboard_payload(
 
     snap_df4 = f"{snapshot_prefix}_df4.csv"
     snap_daily = f"{snapshot_prefix}_daily_df.csv"
+    snap_next_daily = f"{snapshot_prefix}_next_month_daily_df.csv"
+    snap_month_end = f"{snapshot_prefix}_month_end_summary.csv"
     snap_meta = f"{snapshot_prefix}_meta.json"
     snap_html = f"{snapshot_prefix}_email_preview.html"
 
@@ -757,6 +897,13 @@ def persist_dashboard_payload(
 
     daily_df.to_csv(snap_daily, index=False, encoding="utf-8-sig")
     append_output_file_log("業績報表", snap_daily, trigger)
+
+    next_month_daily_df.to_csv(snap_next_daily, index=False, encoding="utf-8-sig")
+    append_output_file_log("次月統計報表", snap_next_daily, trigger)
+
+    if month_end_df is not None and not month_end_df.empty:
+        month_end_df.to_csv(snap_month_end, index=False, encoding="utf-8-sig")
+        append_output_file_log("月底快照", snap_month_end, trigger)
 
     with open(snap_meta, "w", encoding="utf-8") as f:
         json.dump(meta, f, ensure_ascii=False, indent=2)
@@ -793,6 +940,9 @@ def generate_sales_report(send_email=False, persist_dashboard=True, trigger="das
             "df3": pd.DataFrame(),
             "df4": pd.DataFrame(),
             "daily_df": pd.DataFrame(),
+            "next_month_daily_df": pd.DataFrame(),
+            "month_end_df": pd.DataFrame(),
+            "month_end_history_df": load_month_end_history(),
             "email_html": "",
             "updated_at": now_dt().strftime("%Y-%m-%d %H:%M:%S"),
             "execution_log_df": pd.DataFrame(),
@@ -808,6 +958,9 @@ def generate_sales_report(send_email=False, persist_dashboard=True, trigger="das
             "df3": pd.DataFrame(),
             "df4": empty_df4,
             "daily_df": empty_daily,
+            "next_month_daily_df": pd.DataFrame(),
+            "month_end_df": pd.DataFrame(),
+            "month_end_history_df": load_month_end_history(),
             "email_html": "",
             "updated_at": now_dt().strftime("%Y-%m-%d %H:%M:%S"),
             "execution_log_df": pd.DataFrame(),
@@ -908,6 +1061,9 @@ def generate_sales_report(send_email=False, persist_dashboard=True, trigger="das
             "df3": pd.DataFrame(),
             "df4": pd.DataFrame(),
             "daily_df": pd.DataFrame(),
+            "next_month_daily_df": pd.DataFrame(),
+            "month_end_df": pd.DataFrame(),
+            "month_end_history_df": load_month_end_history(),
             "email_html": "",
             "updated_at": now_dt().strftime("%Y-%m-%d %H:%M:%S"),
             "execution_log_df": pd.DataFrame(),
@@ -923,6 +1079,9 @@ def generate_sales_report(send_email=False, persist_dashboard=True, trigger="das
             "df3": pd.DataFrame(),
             "df4": empty_df4,
             "daily_df": empty_daily,
+            "next_month_daily_df": pd.DataFrame(),
+            "month_end_df": pd.DataFrame(),
+            "month_end_history_df": load_month_end_history(),
             "email_html": "",
             "updated_at": now_dt().strftime("%Y-%m-%d %H:%M:%S"),
             "execution_log_df": pd.DataFrame(),
@@ -951,6 +1110,8 @@ def generate_sales_report(send_email=False, persist_dashboard=True, trigger="das
         source = "dashboard"
 
     daily_df = build_daily_overview_df(df4, source=source)
+    next_month_daily_df = build_next_month_overview_df(df4, source=source)
+    month_end_df = build_month_end_summary_df(df4, source=source)
 
     log(f"raw_df columns = {list(raw_df.columns)}")
     log(f"raw_df 前5筆 = {raw_df.head().to_dict('records')}")
@@ -959,12 +1120,14 @@ def generate_sales_report(send_email=False, persist_dashboard=True, trigger="das
     log(f"df3 rows = {len(df3)}")
     log(f"df4 rows = {len(df4)}")
     log(f"daily_df rows = {len(daily_df)}")
+    log(f"next_month_daily_df rows = {len(next_month_daily_df)}")
+    log(f"month_end_df rows = {len(month_end_df)}")
 
     email_html = build_region4_email_html(df4)
     error_msg = None if not city_errors else " / ".join(city_errors)
 
     if persist_dashboard:
-        persist_dashboard_payload(df4, daily_df, email_html, error_msg, trigger=trigger)
+        persist_dashboard_payload(df4, daily_df, next_month_daily_df, month_end_df, email_html, error_msg, trigger=trigger)
 
     if send_email:
         send_region4_email(df4)
@@ -976,6 +1139,9 @@ def generate_sales_report(send_email=False, persist_dashboard=True, trigger="das
         "df3": df3,
         "df4": format_region4_for_display(df4),
         "daily_df": daily_df,
+        "next_month_daily_df": next_month_daily_df,
+        "month_end_df": month_end_df,
+        "month_end_history_df": load_month_end_history(),
         "email_html": email_html,
         "updated_at": now_dt().strftime("%Y-%m-%d %H:%M:%S"),
         "execution_log_df": pd.DataFrame(),
