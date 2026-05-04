@@ -4,6 +4,23 @@ import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
 from datetime import datetime, timedelta, timezone
+# Patch performance_report before dashboard_main is imported.
+# dashboard_main may import generate_sales_report directly; patching here ensures
+# every press of 「更新資料」 writes latest/df4.csv, latest/daily_df.csv,
+# latest/next_month_daily_df.csv and latest/meta.json before the lower monthly
+# tracking section reads them.
+import performance_report as _performance_report
+
+_ORIGINAL_GENERATE_SALES_REPORT = _performance_report.generate_sales_report
+
+
+def _generate_sales_report_force_persist(*args, **kwargs):
+    kwargs["persist_dashboard"] = True
+    return _ORIGINAL_GENERATE_SALES_REPORT(*args, **kwargs)
+
+
+_performance_report.generate_sales_report = _generate_sales_report_force_persist
+
 from dashboard_main import render_page
 
 st.set_page_config(
@@ -276,16 +293,10 @@ div[data-testid="stAlert"] { border-radius: 9px !important; font-size: 13px !imp
 div[data-testid="stCheckbox"] label { color: #374151 !important; font-size: 13px !important; font-weight: 500 !important; }
 h3 { color: #0f172a !important; font-size: 22px !important; font-weight: 700 !important; }
 
-/* ─── Footer from dashboard_main is hidden here.
-   The monthly tracking section is rendered by opapp.py directly below the
-   regional monthly summary, so we do not keep the dashboard_main footer/gap. ─── */
-.footer-cap {
-    display: none !important;
-    height: 0 !important;
-    margin: 0 !important;
-    padding: 0 !important;
-    border: 0 !important;
-}
+/* ─── Footer ─── */
+.footer-cap { display: none !important; }
+/* Remove empty white spacer cards left by the suppressed built-in email/footer area. */
+div[data-testid="stVerticalBlock"] > div:empty { display: none !important; height: 0 !important; margin: 0 !important; padding: 0 !important; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -653,9 +664,8 @@ def _render_page_without_builtin_daily_overview():
         elif "body" in kwargs:
             text = str(kwargs.get("body"))
 
-        # Hide dashboard_main footer and the separator/gap it creates before
-        # this file renders the 月度追蹤 section.
-        if "footer-cap" in text or "Lemon Clean Scheduler Console" in text:
+        # Hide the original footer and any built-in email-preview shell from dashboard_main.
+        if "Lemon Clean Scheduler Console" in text or "footer-cap" in text or "信件預覽" in text:
             return None
 
         if should_start_skip(args, kwargs):
@@ -735,7 +745,6 @@ def render_email_preview_section():
 def render_monthly_tracking_tabs():
     # 取代 dashboard_main 原本單獨的「當月每日業績總覽」。
     # 三個區塊整併在同一個頁籤區，且各自保留刪除功能。
-    # 不加 st.markdown("---")，避免在「各區月度摘要」與「月度追蹤」中間多出空白線。
     st.markdown(
         '<div class="page-header"><div class="page-title">月度追蹤</div>'
         '<div class="page-subtitle">CURRENT / NEXT MONTH / SNAPSHOT</div></div>',
