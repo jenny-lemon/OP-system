@@ -6,42 +6,15 @@ import streamlit.components.v1 as components
 from datetime import datetime, timedelta, timezone
 
 # 重要：一定要在 import dashboard_main 之前 patch performance_report。
-# dashboard_main 的「更新資料」可能只更新畫面上的 session result，
-# 沒有把最新 df4/meta/daily csv 寫回 dashboard_data/latest。
-# 月度追蹤是讀 latest/*.csv，所以這裡強制所有更新資料都 persist。
+# 目的只剩一個：確保 dashboard_main 按「更新資料」時一定會落檔。
+# 不可以在這裡再呼叫 persist_dashboard_payload()，否則同一次更新會寫入兩次。
 import performance_report as _performance_report
 
 _ORIGINAL_GENERATE_SALES_REPORT = _performance_report.generate_sales_report
 
 def _generate_sales_report_force_persist(*args, **kwargs):
     kwargs["persist_dashboard"] = True
-    result = _ORIGINAL_GENERATE_SALES_REPORT(*args, **kwargs)
-
-    # 保險：若 dashboard_main 傳入的參數或舊版 performance_report 沒有落檔，
-    # 這裡再用本次 result 補寫一次 latest 檔案。
-    try:
-        df4 = result.get("df4")
-        email_html = result.get("email_html", "")
-        error_msg = result.get("error")
-        trigger = kwargs.get("trigger", "dashboard")
-        if df4 is not None and not df4.empty:
-            daily_df = result.get("daily_df")
-            next_month_daily_df = result.get("next_month_daily_df")
-            month_end_df = result.get("month_end_df")
-            _performance_report.persist_dashboard_payload(
-                df4=df4,
-                daily_df=daily_df if daily_df is not None else pd.DataFrame(),
-                next_month_daily_df=next_month_daily_df if next_month_daily_df is not None else pd.DataFrame(),
-                month_end_df=month_end_df if month_end_df is not None else pd.DataFrame(),
-                email_html=email_html,
-                error_msg=error_msg,
-                trigger=trigger,
-            )
-    except Exception as e:
-        # 不讓補寫失敗中斷主畫面，但會顯示錯誤，避免靜默失敗。
-        st.warning(f"更新資料已完成，但 latest 檔案補寫失敗：{e}")
-
-    return result
+    return _ORIGINAL_GENERATE_SALES_REPORT(*args, **kwargs)
 
 _performance_report.generate_sales_report = _generate_sales_report_force_persist
 
@@ -589,16 +562,14 @@ def _sync_period_csv_from_df4(path: str, period_label: str) -> pd.DataFrame:
         out = out.sort_values(["_sort_dt", "id"], ascending=[False, False]).drop(columns=["_sort_dt"])
     out = out.reset_index(drop=True)
 
-    # Best-effort persistence for history. Display does not depend on this write.
-    try:
-        out.to_csv(path, index=False, encoding="utf-8-sig")
-    except Exception as e:
-        st.warning(f"月度追蹤檔案寫入失敗，但畫面已用最新 df4 顯示：{e}")
+    # 只回傳給畫面使用，不寫回 CSV。
+    # CSV 只能由 performance_report.generate_sales_report() 在更新資料/排程時寫入。
     return out
 
 def _show_period_section(title: str, filename: str, period_label: str):
+    # 只讀取 performance_report.py 已經寫好的 CSV。
+    # 注意：畫面 render 不可以 append / 排序後寫回 CSV，否則 Streamlit rerun 會造成資料重複。
     path = os.path.join(LATEST_DIR, filename)
-    display_df = _sync_period_csv_from_df4(path, period_label)
     _show_deletable_csv_section(
         title=title,
         path=path,
@@ -606,7 +577,7 @@ def _show_period_section(title: str, filename: str, period_label: str):
         key_prefix=f"period_{period_label}",
         fallback_df=None,
         source_note=None,
-        display_df=display_df,
+        display_df=None,
     )
 
 def _show_month_end_snapshot_tab():
