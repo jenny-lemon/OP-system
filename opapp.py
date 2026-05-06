@@ -343,6 +343,45 @@ def _read_csv_safe(path: str) -> pd.DataFrame:
             return pd.DataFrame()
 
 
+
+
+def _sort_report_rows_for_display(df: pd.DataFrame) -> pd.DataFrame:
+    """Sort report rows strictly by the 日期 column, newest first.
+
+    This fixes old rows whose id format differs from newer rows. The display
+    order must never depend on id, because old ids such as 20260503010745 and
+    new ids such as 20260506152607_本月 do not sort reliably together.
+    """
+    if df is None or df.empty:
+        return df
+
+    out = df.copy()
+
+    if "日期" in out.columns:
+        sort_dt = pd.to_datetime(out["日期"], errors="coerce")
+
+        # If some very old rows have an unparseable 日期, recover datetime from id.
+        if "id" in out.columns:
+            id_text = out["id"].astype(str).str.extract(r"^(\d{14})", expand=False)
+            id_dt = pd.to_datetime(id_text, format="%Y%m%d%H%M%S", errors="coerce")
+            sort_dt = sort_dt.fillna(id_dt)
+
+        out["_sort_dt"] = sort_dt
+
+        # Repair old rows where 統計月份 was blank/None, using 日期 when possible.
+        if "統計月份" in out.columns:
+            month_text = out["_sort_dt"].dt.strftime("%Y/%m")
+            old_month = out["統計月份"].astype(str).str.strip()
+            missing_month = out["統計月份"].isna() | old_month.isin(["", "None", "nan", "NaT"])
+            out.loc[missing_month, "統計月份"] = month_text[missing_month]
+
+        # Strictly sort by actual datetime only. Do not use id as secondary sort.
+        out = out.sort_values("_sort_dt", ascending=False, na_position="last")
+        out = out.drop(columns=["_sort_dt"])
+
+    return out.reset_index(drop=True)
+
+
 def _format_report_df(df: pd.DataFrame) -> pd.DataFrame:
     out = df.copy()
     for col in out.columns:
@@ -384,6 +423,7 @@ def _show_deletable_csv_section(
     # 預設讀 CSV；當月/次月追蹤會傳入 display_df，確保畫面直接使用
     # latest/df4.csv 補出的最新列，不會因 CSV 寫入或快取問題顯示舊資料。
     df = display_df.copy() if display_df is not None else _read_csv_safe(path)
+    df = _sort_report_rows_for_display(df)
 
     if df.empty:
         st.info(empty_msg)
@@ -559,7 +599,7 @@ def _sync_period_csv_from_df4(path: str, period_label: str) -> pd.DataFrame:
 
     if "日期" in out.columns:
         out["_sort_dt"] = pd.to_datetime(out["日期"], errors="coerce")
-        out = out.sort_values(["_sort_dt", "id"], ascending=[False, False]).drop(columns=["_sort_dt"])
+        out = out.sort_values("_sort_dt", ascending=False, na_position="last").drop(columns=["_sort_dt"])
     out = out.reset_index(drop=True)
 
     # 只回傳給畫面使用，不寫回 CSV。
