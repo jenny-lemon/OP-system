@@ -528,7 +528,7 @@ def _build_period_overview_df(
 
     latest_path = os.path.join(LATEST_DIR, latest_filename)
     now_obj = run_dt or now_dt()
-    row_id = f"{now_obj.strftime('%Y%m%d%H%M%S%f')}_{period_label}"
+    row_id = f"{now_obj.strftime('%Y%m%d%H%M%S')}_{period_label}"
     date_text = now_obj.strftime("%Y/%m/%d %H:%M:%S")
 
     if period_label == "次月":
