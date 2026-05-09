@@ -292,6 +292,49 @@ div[data-testid="stAlert"] { border-radius: 9px !important; font-size: 13px !imp
 div[data-testid="stCheckbox"] label { color: #374151 !important; font-size: 13px !important; font-weight: 500 !important; }
 h3 { color: #0f172a !important; font-size: 22px !important; font-weight: 700 !important; }
 
+/* ─── Friendly dropdown navigation ─── */
+.mobile-nav-card {
+    background: #ffffff;
+    border: 1px solid #e8ecf0;
+    border-radius: 14px;
+    padding: 14px 16px;
+    margin: 16px 0 20px;
+    box-shadow: 0 1px 8px rgba(15,23,42,.06);
+}
+.mobile-nav-card label {
+    font-size: 13px !important;
+    font-weight: 700 !important;
+    color: #334155 !important;
+}
+.mobile-nav-card div[data-testid="stSelectbox"] > div > div {
+    min-height: 44px !important;
+    font-size: 15px !important;
+    border-radius: 12px !important;
+    border: 1.5px solid #dbe3ea !important;
+    background: #f8fafc !important;
+}
+.mobile-nav-hint {
+    margin-top: 6px;
+    font-size: 12px;
+    color: #64748b;
+    font-weight: 500;
+}
+@media (max-width: 768px) {
+    .block-container { padding: 0 1rem 3rem !important; }
+    .topbar { margin: 0 -1rem; padding: 0 16px; }
+    .topbar-inner { height: 58px; }
+    .topbar-name { font-size: 17px; }
+    .topbar-logo { font-size: 23px; }
+    .topbar-sep { display: none; }
+    .topbar-clock { font-size: 11px; }
+    .page-header { display: block; padding: 18px 0 14px; margin-bottom: 16px; }
+    .page-title { font-size: 26px; line-height: 1.15; }
+    .page-subtitle { font-size: 11px; margin-top: 6px; }
+    .kpi-row { flex-direction: column; gap: 10px; }
+    .section-card { padding: 16px 14px; }
+    div[data-testid="stMetric"] [data-testid="stMetricValue"] { font-size: 22px !important; }
+}
+
 </style>
 """, unsafe_allow_html=True)
 
@@ -311,19 +354,33 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# ── Navigation strip ──────────────────────────────────────────────────────────
-st.markdown('<div class="nav-strip">', unsafe_allow_html=True)
-nav_cols = st.columns(len(TOP_PAGES))
-for i, (label, icon) in enumerate(TOP_PAGES):
-    active = st.session_state.page == label
-    with nav_cols[i]:
-        cls = "nav-wrap active" if active else "nav-wrap"
-        st.markdown(f'<div class="{cls}">', unsafe_allow_html=True)
-        if st.button(f"{icon} {label}", key=f"nav_{label}"):
-            st.session_state.page = label
-            st.rerun()
-        st.markdown("</div>", unsafe_allow_html=True)
+# ── Navigation dropdown ───────────────────────────────────────────────────────
+page_options = [f"{icon} {label}" for label, icon in TOP_PAGES]
+page_label_map = {f"{icon} {label}": label for label, icon in TOP_PAGES}
+
+current_option = next(
+    f"{icon} {label}"
+    for label, icon in TOP_PAGES
+    if label == st.session_state.page
+)
+
+st.markdown('<div class="mobile-nav-card">', unsafe_allow_html=True)
+selected_page_option = st.selectbox(
+    "選擇功能頁面",
+    options=page_options,
+    index=page_options.index(current_option),
+    key="page_selectbox",
+)
+st.markdown(
+    '<div class="mobile-nav-hint">手機版使用下拉選單切換頁面，避免功能列擠成一排。</div>',
+    unsafe_allow_html=True,
+)
 st.markdown("</div>", unsafe_allow_html=True)
+
+selected_page = page_label_map[selected_page_option]
+if selected_page != st.session_state.page:
+    st.session_state.page = selected_page
+    st.rerun()
 
 # ── Render page ───────────────────────────────────────────────────────────────
 DASHBOARD_DIR = os.path.join(".", "dashboard_data")
