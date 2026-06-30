@@ -2089,3 +2089,17 @@
 20260630022356350243,2026-06-30 02:23:56,月底快照,20260630_022356_month_end_summary.csv,./dashboard_data/snapshots/202606/20260630_022356_month_end_summary.csv,schedule
 20260630022356363719,2026-06-30 02:23:56,業績報表,20260630_022356_meta.json,./dashboard_data/snapshots/202606/20260630_022356_meta.json,schedule
 20260630022356377106,2026-06-30 02:23:56,業績報表,20260630_022356_email_preview.html,./dashboard_data/snapshots/202606/20260630_022356_email_preview.html,schedule
+20260630122135254551,2026-06-30 12:21:35,月底快照,month_end_summary.csv,./dashboard_data/daily_overview_history/month_end_summary.csv,schedule
+20260630122135269804,2026-06-30 12:21:35,月底快照,20260630_month_end_summary.csv,./dashboard_data/snapshots/202606/20260630_month_end_summary.csv,schedule
+20260630122135290336,2026-06-30 12:21:35,業績報表,df4.csv,./dashboard_data/latest/df4.csv,schedule
+20260630122135307277,2026-06-30 12:21:35,業績報表,daily_df.csv,./dashboard_data/latest/daily_df.csv,schedule
+20260630122135323703,2026-06-30 12:21:35,次月統計報表,next_month_daily_df.csv,./dashboard_data/latest/next_month_daily_df.csv,schedule
+20260630122135338554,2026-06-30 12:21:35,月底快照,month_end_summary.csv,./dashboard_data/latest/month_end_summary.csv,schedule
+20260630122135352774,2026-06-30 12:21:35,業績報表,email_preview.html,./dashboard_data/latest/email_preview.html,schedule
+20260630122135367167,2026-06-30 12:21:35,業績報表,meta.json,./dashboard_data/latest/meta.json,schedule
+20260630122135382002,2026-06-30 12:21:35,業績報表,20260630_122135_df4.csv,./dashboard_data/snapshots/202606/20260630_122135_df4.csv,schedule
+20260630122135398721,2026-06-30 12:21:35,業績報表,20260630_122135_daily_df.csv,./dashboard_data/snapshots/202606/20260630_122135_daily_df.csv,schedule
+20260630122135415570,2026-06-30 12:21:35,次月統計報表,20260630_122135_next_month_daily_df.csv,./dashboard_data/snapshots/202606/20260630_122135_next_month_daily_df.csv,schedule
+20260630122135430837,2026-06-30 12:21:35,月底快照,20260630_122135_month_end_summary.csv,./dashboard_data/snapshots/202606/20260630_122135_month_end_summary.csv,schedule
+20260630122135445122,2026-06-30 12:21:35,業績報表,20260630_122135_meta.json,./dashboard_data/snapshots/202606/20260630_122135_meta.json,schedule
+20260630122135459752,2026-06-30 12:21:35,業績報表,20260630_122135_email_preview.html,./dashboard_data/snapshots/202606/20260630_122135_email_preview.html,schedule
