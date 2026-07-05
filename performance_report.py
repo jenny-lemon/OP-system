@@ -753,7 +753,7 @@ def build_region4_email_html(df4):
     """
 
 
-def send_region4_email(df4, recipient="jenny@lemonclean.com.tw"):
+def send_region4_email(df4, recipient="jenny@hers.com.tw"):
     sender = "jenny@lemonclean.com.tw"
     password = "bkhe akob wvse ibhm"
 
