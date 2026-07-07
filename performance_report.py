@@ -754,8 +754,8 @@ def build_region4_email_html(df4):
 
 
 def send_region4_email(df4, recipient="jenny@hers.com.tw"):
-    sender = "jenny@lemonclean.com.tw"
-    password = "bkhe akob wvse ibhm"
+    sender = "jenny@hers.com.tw"
+    password = "snmn bepg ncvc pxzt"
 
     today_str = datetime.today().strftime("%Y%m%d")
     subject = f"業績報表{today_str}"
