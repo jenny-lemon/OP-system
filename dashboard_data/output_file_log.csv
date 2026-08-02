@@ -3099,3 +3099,13 @@
 20260802114651506580,2026-08-02 11:46:51,次月統計報表,20260802_114651_next_month_daily_df.csv,./dashboard_data/snapshots/202608/20260802_114651_next_month_daily_df.csv,schedule
 20260802114651525356,2026-08-02 11:46:51,業績報表,20260802_114651_meta.json,./dashboard_data/snapshots/202608/20260802_114651_meta.json,schedule
 20260802114651543877,2026-08-02 11:46:51,業績報表,20260802_114651_email_preview.html,./dashboard_data/snapshots/202608/20260802_114651_email_preview.html,schedule
+20260802193141323599,2026-08-02 19:31:41,業績報表,df4.csv,./dashboard_data/latest/df4.csv,schedule
+20260802193141347493,2026-08-02 19:31:41,業績報表,daily_df.csv,./dashboard_data/latest/daily_df.csv,schedule
+20260802193141369669,2026-08-02 19:31:41,次月統計報表,next_month_daily_df.csv,./dashboard_data/latest/next_month_daily_df.csv,schedule
+20260802193141388871,2026-08-02 19:31:41,業績報表,email_preview.html,./dashboard_data/latest/email_preview.html,schedule
+20260802193141408108,2026-08-02 19:31:41,業績報表,meta.json,./dashboard_data/latest/meta.json,schedule
+20260802193141428305,2026-08-02 19:31:41,業績報表,20260802_193141_df4.csv,./dashboard_data/snapshots/202608/20260802_193141_df4.csv,schedule
+20260802193141451101,2026-08-02 19:31:41,業績報表,20260802_193141_daily_df.csv,./dashboard_data/snapshots/202608/20260802_193141_daily_df.csv,schedule
+20260802193141473378,2026-08-02 19:31:41,次月統計報表,20260802_193141_next_month_daily_df.csv,./dashboard_data/snapshots/202608/20260802_193141_next_month_daily_df.csv,schedule
+20260802193141492552,2026-08-02 19:31:41,業績報表,20260802_193141_meta.json,./dashboard_data/snapshots/202608/20260802_193141_meta.json,schedule
+20260802193141512146,2026-08-02 19:31:41,業績報表,20260802_193141_email_preview.html,./dashboard_data/snapshots/202608/20260802_193141_email_preview.html,schedule
