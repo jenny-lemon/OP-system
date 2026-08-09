@@ -1,9 +1,5 @@
 streamlit
 requests
 beautifulsoup4
+lxml
 pandas
-openpyxl
-google-api-python-client
-google-auth
-google-auth-httplib2
-google-auth-oauthlib

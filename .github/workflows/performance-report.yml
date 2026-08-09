@@ -14,6 +14,7 @@ jobs:
   run-performance-report:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+
     env:
       TZ: Asia/Taipei
       TAIPEI_EMAIL: ${{ secrets.TAIPEI_EMAIL }}
@@ -52,23 +53,13 @@ jobs:
           python -m pip install --upgrade pip
           pip install pandas requests beautifulsoup4 lxml streamlit
 
-      - name: Ensure output folders exist
+      - name: Ensure performance report folder exists
         run: |
           python - <<'PY'
-          import os
-          try:
-              from paths import (
-                  PATH_SCHEDULE, PATH_CLEANER_SCHEDULE, PATH_CLEANER_DATA,
-                  PATH_ORDER, PATH_REPORT, PATH_VIP, PATH_HR
-              )
-              for p in [
-                  PATH_SCHEDULE, PATH_CLEANER_SCHEDULE, PATH_CLEANER_DATA,
-                  PATH_ORDER, PATH_REPORT, PATH_VIP, PATH_HR
-              ]:
-                  os.makedirs(p, exist_ok=True)
-                  print("OK:", p)
-          except Exception as e:
-              print(f"skip ensure paths: {e}")
+          from paths import PATH_REPORT
+
+          PATH_REPORT.mkdir(parents=True, exist_ok=True)
+          print("OK:", PATH_REPORT)
           PY
 
       - name: Run performance report

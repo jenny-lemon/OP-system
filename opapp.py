@@ -10,6 +10,9 @@ from datetime import datetime, timedelta, timezone
 # 不可以在這裡再呼叫 persist_dashboard_payload()，否則同一次更新會寫入兩次。
 import performance_report as _performance_report
 
+LATEST_DIR = _performance_report.LATEST_DIR
+DAILY_HISTORY_DIR = _performance_report.DAILY_HISTORY_DIR
+
 _ORIGINAL_GENERATE_SALES_REPORT = _performance_report.generate_sales_report
 
 def _generate_sales_report_force_persist(*args, **kwargs):
@@ -21,7 +24,7 @@ _performance_report.generate_sales_report = _generate_sales_report_force_persist
 from dashboard_main import render_page
 
 st.set_page_config(
-    page_title="Jenny 排程控制台",
+    page_title="Jenny 業績報表",
     page_icon="🍋",
     layout="wide",
 )
@@ -29,24 +32,6 @@ st.set_page_config(
 OPAPP_VERSION = "2026-05-04-force-persist-v1"
 
 TZ_TAIPEI = timezone(timedelta(hours=8))
-
-TOP_PAGES = [
-    ("主控表",       "📋"),
-    ("業績報表",     "💹"),
-    ("上下半月訂單", "🧾"),
-    ("手動執行",     "▶️"),
-    ("Log 監控",    "📄"),
-    ("輸出檔案",     "📂"),
-    ("程式管理",     "⚙️"),
-    ("排程設定",     "⏰"),
-]
-
-if "page" not in st.session_state:
-    st.session_state.page = "主控表"
-
-_VALID_PAGES = [label for label, _icon in TOP_PAGES]
-if st.session_state.page not in _VALID_PAGES:
-    st.session_state.page = "業績報表"
 
 # ── Global CSS ────────────────────────────────────────────────────────────────
 st.markdown("""
@@ -355,39 +340,6 @@ st.markdown(
 )
 
 # ── Navigation dropdown ───────────────────────────────────────────────────────
-page_options = [f"{icon} {label}" for label, icon in TOP_PAGES]
-page_label_map = {f"{icon} {label}": label for label, icon in TOP_PAGES}
-
-current_option = next(
-    f"{icon} {label}"
-    for label, icon in TOP_PAGES
-    if label == st.session_state.page
-)
-
-st.markdown('<div class="mobile-nav-card">', unsafe_allow_html=True)
-selected_page_option = st.selectbox(
-    "選擇功能頁面",
-    options=page_options,
-    index=page_options.index(current_option),
-    key="page_selectbox",
-)
-st.markdown(
-    '<div class="mobile-nav-hint">手機版使用下拉選單切換頁面，避免功能列擠成一排。</div>',
-    unsafe_allow_html=True,
-)
-st.markdown("</div>", unsafe_allow_html=True)
-
-selected_page = page_label_map[selected_page_option]
-if selected_page != st.session_state.page:
-    st.session_state.page = selected_page
-    st.rerun()
-
-# ── Render page ───────────────────────────────────────────────────────────────
-DASHBOARD_DIR = os.path.join(".", "dashboard_data")
-LATEST_DIR = os.path.join(DASHBOARD_DIR, "latest")
-DAILY_HISTORY_DIR = os.path.join(DASHBOARD_DIR, "daily_overview_history")
-
-
 def _read_csv_safe(path: str) -> pd.DataFrame:
     if not os.path.exists(path):
         return pd.DataFrame()
@@ -473,9 +425,9 @@ def _show_deletable_csv_section(
     path: str,
     empty_msg: str,
     key_prefix: str,
-    fallback_df: pd.DataFrame | None = None,
-    source_note: str | None = None,
-    display_df: pd.DataFrame | None = None,
+    fallback_df = None,
+    source_note = None,
+    display_df = None,
 ):
     # 預設讀 CSV；當月/次月追蹤會傳入 display_df，確保畫面直接使用
     # latest/df4.csv 補出的最新列，不會因 CSV 寫入或快取問題顯示舊資料。
@@ -568,7 +520,7 @@ def _period_config(period_label: str, dt: datetime):
     return amount_col, ratio_col, stat_month
 
 
-def _build_overview_from_df4(period_label: str, row_dt: datetime | None = None, run_key: str | None = None) -> pd.DataFrame:
+def _build_overview_from_df4(period_label: str, row_dt = None, run_key = None) -> pd.DataFrame:
     """Build one overview row from latest df4.csv using current/next logic."""
     df4 = _read_csv_safe(os.path.join(LATEST_DIR, "df4.csv"))
     cols = [
@@ -850,7 +802,4 @@ def render_performance_report_page():
     render_email_preview_section()
 
 
-if st.session_state.page == "業績報表":
-    render_performance_report_page()
-else:
-    render_page(st.session_state.page)
+render_performance_report_page()
