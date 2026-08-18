@@ -3,6 +3,7 @@ import json
 import calendar
 import re
 import smtplib
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from email.mime.text import MIMEText
 from datetime import datetime, timedelta, timezone
 
@@ -266,10 +267,13 @@ def build_order_date_summary(records) -> pd.DataFrame:
 
 def build_month_performance_summary(raw_df: pd.DataFrame, month_ranges) -> pd.DataFrame:
     cols = ["地區"] + [f"{label}業績" for label, _, _ in month_ranges]
-    work = raw_df.copy()
-    work["類別"] = work.apply(lambda r: to_category(r["服務"], r["收入類型"]), axis=1)
-    work = work[work["類別"] == "清潔"].copy()
-    work["業績"] = pd.to_numeric(work["已付款"], errors="coerce").fillna(0) + pd.to_numeric(work["待付款"], errors="coerce").fillna(0)
+    if raw_df.empty:
+        work = pd.DataFrame(columns=["城市", "月份", "業績"])
+    else:
+        work = raw_df.copy()
+        work["類別"] = work.apply(lambda r: to_category(r["服務"], r["收入類型"]), axis=1)
+        work = work[work["類別"] == "清潔"].copy()
+        work["業績"] = pd.to_numeric(work["已付款"], errors="coerce").fillna(0) + pd.to_numeric(work["待付款"], errors="coerce").fillna(0)
     rows = []
     for city in CITY_ORDER:
         row = {"地區": city}
@@ -313,6 +317,142 @@ def build_net_performance_summary(raw_df: pd.DataFrame, reserve_df: pd.DataFrame
         rows.append(row)
     rows.append({"地區": "加總", **{col: sum(row[col] for row in rows) for col in cols[1:]}})
     return pd.DataFrame(rows, columns=cols)
+
+
+def _update_latest_meta(**changes):
+    """只更新本次報表相關欄位，保留其他頁籤的最近篩選與筆數。"""
+    ensure_dirs()
+    path = os.path.join(LATEST_DIR, "meta.json")
+    meta = {}
+    try:
+        if os.path.exists(path):
+            with open(path, "r", encoding="utf-8") as f:
+                meta = json.load(f)
+    except Exception:
+        meta = {}
+    meta.update(changes)
+    meta["updated_at"] = now_dt().strftime("%Y-%m-%d %H:%M:%S")
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(meta, f, ensure_ascii=False, indent=2)
+
+
+def _parallel_city_results(worker):
+    enabled = [city for city in CITY_ORDER if city in ACCOUNTS]
+    if not enabled:
+        raise RuntimeError("ACCOUNTS 沒有任何可用城市設定")
+    results = []
+    errors = []
+    with ThreadPoolExecutor(max_workers=min(5, len(enabled))) as executor:
+        futures = {executor.submit(worker, city): city for city in enabled}
+        for future in as_completed(futures):
+            city = futures[future]
+            try:
+                results.append((city, future.result()))
+            except Exception as exc:
+                errors.append(f"{city}：{exc}")
+                log(f"❌ {city}：{exc}")
+    if not results and errors:
+        raise RuntimeError("所有地區更新失敗：" + " / ".join(errors))
+    return results, errors
+
+
+def generate_order_date_report(order_start_date: str, order_end_date: str, trigger="dashboard"):
+    """只更新付款彙總，不重抓目前總表與月份保留單。"""
+    if order_end_date < order_start_date:
+        raise ValueError("訂購日期迄日不可早於起日")
+
+    def worker(city):
+        session = requests.Session()
+        account = ACCOUNTS[city]
+        login(session, account["email"], account["password"])
+        items = _fetch_purchase_items(session, date_s=order_start_date, date_e=order_end_date)
+        for item in items:
+            item["__city"] = city
+        return items
+
+    city_results, errors = _parallel_city_results(worker)
+    records = [item for _, items in city_results for item in items]
+    out = build_order_date_summary(records)
+    ensure_dirs()
+    path = os.path.join(LATEST_DIR, "order_date_summary.csv")
+    out.to_csv(path, index=False, encoding="utf-8-sig")
+    append_output_file_log("訂購日期付款彙總", path, trigger)
+    _update_latest_meta(
+        order_start_date=order_start_date,
+        order_end_date=order_end_date,
+        order_date_rows=int(len(out)),
+        order_date_updated_at=now_dt().strftime("%Y-%m-%d %H:%M:%S"),
+        order_date_error=" / ".join(errors) if errors else None,
+    )
+    return out
+
+
+def generate_month_range_reports(report_start_month: str, report_end_month: str, trigger="dashboard"):
+    """只更新月份業績、保留單及扣除後業績，並行處理各地區。"""
+    month_ranges = get_report_month_ranges(report_start_month, report_end_month)
+
+    def worker(city):
+        session = requests.Session()
+        account = ACCOUNTS[city]
+        login(session, account["email"], account["password"])
+        merged = {}
+        for label, start, end in month_ranges:
+            for status in [1, 0]:
+                for keyword in get_keywords(city):
+                    response = session.get(build_url(start, end, status, keyword), headers=HEADERS, allow_redirects=True)
+                    response.raise_for_status()
+                    for row in parse_html(response.text):
+                        key = (label, row["日期"], row["收入類型"], row["資料來源"], row["服務"], row["子項目"])
+                        if key not in merged:
+                            merged[key] = {
+                                "城市": city, "月份": label, "日期": row["日期"],
+                                "收入類型": row["收入類型"], "資料來源": row["資料來源"],
+                                "服務": row["服務"], "子項目": row["子項目"],
+                                "已付款": 0, "待付款": 0,
+                            }
+                        merged[key]["已付款"] += row["已付款"]
+                        merged[key]["待付款"] += row["待付款"]
+        reserve_items = _fetch_purchase_items(
+            session,
+            clean_date_s=month_ranges[0][1],
+            clean_date_e=month_ranges[-1][2],
+        )
+        for item in reserve_items:
+            item["__city"] = city
+        return list(merged.values()), reserve_items
+
+    city_results, errors = _parallel_city_results(worker)
+    raw_rows = [row for _, (rows, _) in city_results for row in rows]
+    reserve_records = [item for _, (_, items) in city_results for item in items]
+    raw_df = pd.DataFrame(raw_rows)
+    performance_df = build_month_performance_summary(raw_df, month_ranges)
+    reserve_df = build_reserve_summary(reserve_records, month_ranges)
+    net_df = build_net_performance_summary(raw_df, reserve_df, month_ranges)
+
+    ensure_dirs()
+    outputs = [
+        (performance_df, os.path.join(LATEST_DIR, "month_performance_summary.csv")),
+        (reserve_df, os.path.join(LATEST_DIR, "reserve_summary.csv")),
+        (net_df, os.path.join(LATEST_DIR, "net_performance_summary.csv")),
+    ]
+    for frame, path in outputs:
+        frame.to_csv(path, index=False, encoding="utf-8-sig")
+        append_output_file_log("月份業績統整", path, trigger)
+    _update_latest_meta(
+        report_start_month=month_ranges[0][0],
+        report_end_month=month_ranges[-1][0],
+        month_performance_rows=int(len(performance_df)),
+        reserve_rows=int(len(reserve_df)),
+        net_performance_rows=int(len(net_df)),
+        month_report_updated_at=now_dt().strftime("%Y-%m-%d %H:%M:%S"),
+        month_report_error=" / ".join(errors) if errors else None,
+    )
+    return {
+        "month_performance_df": performance_df,
+        "reserve_df": reserve_df,
+        "net_performance_df": net_df,
+        "error": " / ".join(errors) if errors else None,
+    }
 
 
 def build_url(start, end, status, keyword=""):
@@ -1136,23 +1276,32 @@ def persist_dashboard_payload(
         f.write(email_html or "")
     append_output_file_log("業績報表", latest_html, trigger)
 
-    meta = {
+    previous_meta = {}
+    try:
+        if os.path.exists(latest_meta):
+            with open(latest_meta, "r", encoding="utf-8") as f:
+                previous_meta = json.load(f)
+    except Exception:
+        previous_meta = {}
+
+    meta = dict(previous_meta)
+    meta.update({
         "updated_at": now.strftime("%Y-%m-%d %H:%M:%S"),
         "df4_rows": int(len(df4)),
         "daily_rows": int(len(daily_df)),
         "next_month_daily_rows": int(len(next_month_daily_df)),
         "month_end_rows": int(len(month_end_df)),
-        "order_date_rows": int(len(order_date_df)) if order_date_df is not None else 0,
-        "month_performance_rows": int(len(month_performance_df)) if month_performance_df is not None else 0,
-        "reserve_rows": int(len(reserve_df)) if reserve_df is not None else 0,
-        "net_performance_rows": int(len(net_performance_df)) if net_performance_df is not None else 0,
-        "report_start_month": report_start_month,
-        "report_end_month": report_end_month,
-        "order_start_date": order_start_date,
-        "order_end_date": order_end_date,
+        "order_date_rows": int(len(order_date_df)) if order_date_df is not None else previous_meta.get("order_date_rows", 0),
+        "month_performance_rows": int(len(month_performance_df)) if month_performance_df is not None else previous_meta.get("month_performance_rows", 0),
+        "reserve_rows": int(len(reserve_df)) if reserve_df is not None else previous_meta.get("reserve_rows", 0),
+        "net_performance_rows": int(len(net_performance_df)) if net_performance_df is not None else previous_meta.get("net_performance_rows", 0),
+        "report_start_month": report_start_month if report_start_month is not None else previous_meta.get("report_start_month"),
+        "report_end_month": report_end_month if report_end_month is not None else previous_meta.get("report_end_month"),
+        "order_start_date": order_start_date if order_start_date is not None else previous_meta.get("order_start_date"),
+        "order_end_date": order_end_date if order_end_date is not None else previous_meta.get("order_end_date"),
         "error": error_msg,
         "trigger": trigger,
-    }
+    })
     with open(latest_meta, "w", encoding="utf-8") as f:
         json.dump(meta, f, ensure_ascii=False, indent=2)
     append_output_file_log("業績報表", latest_meta, trigger)
@@ -1210,6 +1359,7 @@ def generate_sales_report(
     report_end_month: Optional[str] = None,
     order_start_date: Optional[str] = None,
     order_end_date: Optional[str] = None,
+    include_extra_reports: bool = True,
 ):
     log("🔥 開始業績報表")
 
@@ -1226,11 +1376,13 @@ def generate_sales_report(
     next_month_label = n_start[:7].replace("-", "/")
     fetch_month_ranges = []
     seen_months = set()
-    for month_range in [
+    requested_ranges = [
         (current_month_label, m_start, m_end),
         (next_month_label, n_start, n_end),
-        *report_month_ranges,
-    ]:
+    ]
+    if include_extra_reports:
+        requested_ranges.extend(report_month_ranges)
+    for month_range in requested_ranges:
         if month_range[0] not in seen_months:
             seen_months.add(month_range[0])
             fetch_month_ranges.append(month_range)
@@ -1348,28 +1500,29 @@ def generate_sales_report(
                             merged[key]["已付款"] += row["已付款"]
                             merged[key]["待付款"] += row["待付款"]
 
-            try:
-                order_items = _fetch_purchase_items(
-                    session,
-                    date_s=order_start_date,
-                    date_e=order_end_date,
-                )
-                for item in order_items:
-                    item["__city"] = city
-                order_date_records.extend(order_items)
+            if include_extra_reports:
+                try:
+                    order_items = _fetch_purchase_items(
+                        session,
+                        date_s=order_start_date,
+                        date_e=order_end_date,
+                    )
+                    for item in order_items:
+                        item["__city"] = city
+                    order_date_records.extend(order_items)
 
-                reserve_items = _fetch_purchase_items(
-                    session,
-                    clean_date_s=report_month_ranges[0][1],
-                    clean_date_e=report_month_ranges[-1][2],
-                )
-                for item in reserve_items:
-                    item["__city"] = city
-                reserve_records.extend(reserve_items)
-            except Exception as extra_exc:
-                msg = f"{city} 新增報表資料抓取失敗：{extra_exc}"
-                city_errors.append(msg)
-                log(f"⚠️ {msg}")
+                    reserve_items = _fetch_purchase_items(
+                        session,
+                        clean_date_s=report_month_ranges[0][1],
+                        clean_date_e=report_month_ranges[-1][2],
+                    )
+                    for item in reserve_items:
+                        item["__city"] = city
+                    reserve_records.extend(reserve_items)
+                except Exception as extra_exc:
+                    msg = f"{city} 新增報表資料抓取失敗：{extra_exc}"
+                    city_errors.append(msg)
+                    log(f"⚠️ {msg}")
 
             if city_row_count == 0:
                 msg = f"{city}：登入成功，但沒有抓到任何表格資料"
@@ -1435,10 +1588,10 @@ def generate_sales_report(
     df2 = build_region2_df(raw_df)
     df3 = build_region3_df(df2)
     df4 = build_region4_df(df2)
-    order_date_df = build_order_date_summary(order_date_records)
-    month_performance_df = build_month_performance_summary(report_raw_df, report_month_ranges)
-    reserve_df = build_reserve_summary(reserve_records, report_month_ranges)
-    net_performance_df = build_net_performance_summary(report_raw_df, reserve_df, report_month_ranges)
+    order_date_df = build_order_date_summary(order_date_records) if include_extra_reports else None
+    month_performance_df = build_month_performance_summary(report_raw_df, report_month_ranges) if include_extra_reports else None
+    reserve_df = build_reserve_summary(reserve_records, report_month_ranges) if include_extra_reports else None
+    net_performance_df = build_net_performance_summary(report_raw_df, reserve_df, report_month_ranges) if include_extra_reports else None
 
     hour = now_dt().hour
 
@@ -1470,10 +1623,11 @@ def generate_sales_report(
     log(f"daily_df rows = {len(daily_df)}")
     log(f"next_month_daily_df rows = {len(next_month_daily_df)}")
     log(f"month_end_df rows = {len(month_end_df)}")
-    log(f"order_date_df rows = {len(order_date_df)}")
-    log(f"month_performance_df rows = {len(month_performance_df)}")
-    log(f"reserve_df rows = {len(reserve_df)}")
-    log(f"net_performance_df rows = {len(net_performance_df)}")
+    if include_extra_reports:
+        log(f"order_date_df rows = {len(order_date_df)}")
+        log(f"month_performance_df rows = {len(month_performance_df)}")
+        log(f"reserve_df rows = {len(reserve_df)}")
+        log(f"net_performance_df rows = {len(net_performance_df)}")
 
     email_html = build_region4_email_html(df4)
     error_msg = None if not city_errors else " / ".join(city_errors)
@@ -1485,10 +1639,10 @@ def generate_sales_report(
             month_performance_df=month_performance_df,
             reserve_df=reserve_df,
             net_performance_df=net_performance_df,
-            report_start_month=report_month_ranges[0][0],
-            report_end_month=report_month_ranges[-1][0],
-            order_start_date=order_start_date,
-            order_end_date=order_end_date,
+            report_start_month=report_month_ranges[0][0] if include_extra_reports else None,
+            report_end_month=report_month_ranges[-1][0] if include_extra_reports else None,
+            order_start_date=order_start_date if include_extra_reports else None,
+            order_end_date=order_end_date if include_extra_reports else None,
             error_msg=error_msg,
             trigger=trigger,
         )
