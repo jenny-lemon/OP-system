@@ -1,6 +1,7 @@
 import os
 import json
 import calendar
+import re
 import smtplib
 from email.mime.text import MIMEText
 from datetime import datetime, timedelta, timezone
@@ -101,6 +102,217 @@ def get_ranges():
     next_end = f"{ny}-{nm:02d}-{calendar.monthrange(ny, nm)[1]:02d}"
 
     return (this_start, this_end), (next_start, next_end)
+
+
+def get_report_month_ranges(start_month: Optional[str] = None, end_month: Optional[str] = None):
+    """依畫面設定回傳起訖月份（含首尾）的標籤與完整月份起訖日。"""
+    try:
+        base = datetime.strptime(str(start_month), "%Y-%m") if start_month else now_dt().replace(day=1)
+        if end_month:
+            end_base = datetime.strptime(str(end_month), "%Y-%m")
+        else:
+            end_base = base
+    except ValueError as exc:
+        raise ValueError("起訖月份格式必須為 YYYY-MM") from exc
+
+    month_count = (end_base.year - base.year) * 12 + end_base.month - base.month + 1
+    if month_count < 1:
+        raise ValueError("結束月份不可早於起始月份")
+    if month_count > 24:
+        raise ValueError("月份區間最多 24 個月")
+
+    ranges = []
+    for offset in range(month_count):
+        month_index = base.month - 1 + offset
+        year = base.year + month_index // 12
+        month = month_index % 12 + 1
+        label = f"{year}/{month:02d}"
+        start = f"{year}-{month:02d}-01"
+        end = f"{year}-{month:02d}-{calendar.monthrange(year, month)[1]:02d}"
+        ranges.append((label, start, end))
+    return ranges
+
+
+def _extract_purchase_list_data(html: str):
+    """讀取後台 purchaseList Vue JSON；若頁面版本無此資料就回傳空陣列。"""
+    source = str(html or "")
+    marker_pos = source.find("purchaseList:")
+    if marker_pos < 0:
+        return []
+    start = source.find("{", marker_pos)
+    if start < 0:
+        return []
+
+    depth = 0
+    in_string = False
+    escaped = False
+    end = -1
+    for idx in range(start, len(source)):
+        char = source[idx]
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+        elif char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                end = idx + 1
+                break
+    if end < 0:
+        return []
+    try:
+        payload = json.loads(source[start:end])
+    except Exception:
+        return []
+    data = payload.get("data", [])
+    return data if isinstance(data, list) else []
+
+
+def _fetch_purchase_items(session, **filters):
+    """依條件讀取所有分頁訂單並以訂單編號去重。"""
+    seen = {}
+    for page in range(1, 81):
+        params = {
+            "keyword": "", "name": "", "phone": "", "orderNo": "",
+            "date_s": "", "date_e": "", "clean_date_s": "", "clean_date_e": "",
+            "paid_at_s": "", "paid_at_e": "", "refundDateS": "", "refundDateE": "",
+            "buy": "", "area_id": "", "isCharge": "", "isRefund": "",
+            "p_board": "on", "payway": "", "purchase_status": "",
+            "progress_status": "", "invoiceStatus": "", "otherFee": "", "orderBy": "",
+            "page": str(page),
+        }
+        params.update({k: v for k, v in filters.items() if v not in (None, "")})
+        response = session.get(PURCHASE_URL, params=params, headers=HEADERS, allow_redirects=True)
+        response.raise_for_status()
+        items = _extract_purchase_list_data(response.text)
+        if not items:
+            break
+        for item in items:
+            order_no = str(item.get("order_no") or item.get("orderNo") or item.get("purchase_id") or "").strip()
+            if order_no:
+                seen[order_no] = item
+        if len(items) < 20:
+            break
+    return list(seen.values())
+
+
+def _purchase_amount(item) -> int:
+    return safe_int(item.get("total") or item.get("amount") or item.get("price") or 0)
+
+
+def _purchase_is_cancelled(item) -> bool:
+    return bool(item.get("cancel_at") or item.get("cancel_log") or str(item.get("purchase_status")) in {"cancel", "cancelled"})
+
+
+def _purchase_is_paid(item) -> bool:
+    return bool(item.get("paid_at") or str(item.get("purchase_status") or "").strip() == "1")
+
+
+def _purchase_is_reserve(item) -> bool:
+    searchable = json.dumps(item, ensure_ascii=False, default=str)
+    name = str(item.get("name") or item.get("customer_name") or "")
+    return "系統保留單" in searchable or "大掃除檸檬保留單" in searchable or "保留" in name or "檸檬" in name
+
+
+def _purchase_person_hours(item) -> float:
+    """保留時數以人數 × 每人服務時數計算。"""
+    try:
+        people = float(item.get("person") or item.get("people") or item.get("cleaner_count") or 1)
+    except Exception:
+        people = 1
+    try:
+        hours = float(item.get("hour") or item.get("hours") or item.get("service_hours") or 0)
+    except Exception:
+        hours = 0
+    if hours <= 0:
+        try:
+            start_dt = datetime.strptime(str(item.get("period_s") or "")[:5], "%H:%M")
+            end_dt = datetime.strptime(str(item.get("period_e") or "")[:5], "%H:%M")
+            hours = max(0, (end_dt - start_dt).total_seconds() / 3600)
+        except Exception:
+            hours = 0
+    return people * hours
+
+
+def build_order_date_summary(records) -> pd.DataFrame:
+    cols = ["地區", "未付款", "已付款", "未付款＋已付款"]
+    rows = []
+    for item in records:
+        if _purchase_is_cancelled(item):
+            continue
+        city = str(item.get("__city") or "")
+        if not city:
+            continue
+        amount = _purchase_amount(item)
+        rows.append({"地區": city, "未付款": 0 if _purchase_is_paid(item) else amount, "已付款": amount if _purchase_is_paid(item) else 0})
+    if not rows:
+        return pd.DataFrame(columns=cols)
+    out = pd.DataFrame(rows).groupby("地區", as_index=False)[["未付款", "已付款"]].sum()
+    out["未付款＋已付款"] = out["未付款"] + out["已付款"]
+    out["地區"] = pd.Categorical(out["地區"], CITY_ORDER, ordered=True)
+    out = out.sort_values("地區").reset_index(drop=True)
+    out["地區"] = out["地區"].astype(str)
+    out = pd.concat([out, pd.DataFrame([{"地區": "加總", "未付款": out["未付款"].sum(), "已付款": out["已付款"].sum(), "未付款＋已付款": out["未付款＋已付款"].sum()}])], ignore_index=True)
+    return out[cols]
+
+
+def build_month_performance_summary(raw_df: pd.DataFrame, month_ranges) -> pd.DataFrame:
+    cols = ["地區"] + [f"{label}業績" for label, _, _ in month_ranges]
+    work = raw_df.copy()
+    work["類別"] = work.apply(lambda r: to_category(r["服務"], r["收入類型"]), axis=1)
+    work = work[work["類別"] == "清潔"].copy()
+    work["業績"] = pd.to_numeric(work["已付款"], errors="coerce").fillna(0) + pd.to_numeric(work["待付款"], errors="coerce").fillna(0)
+    rows = []
+    for city in CITY_ORDER:
+        row = {"地區": city}
+        for label, _, _ in month_ranges:
+            row[f"{label}業績"] = work[(work["城市"] == city) & (work["月份"] == label)]["業績"].sum()
+        rows.append(row)
+    rows.append({"地區": "加總", **{col: sum(row[col] for row in rows) for col in cols[1:]}})
+    return pd.DataFrame(rows, columns=cols)
+
+
+def build_reserve_summary(records, month_ranges) -> pd.DataFrame:
+    cols = ["地區"]
+    for label, _, _ in month_ranges:
+        cols.extend([f"{label}保留單時數", f"{label}保留單業績"])
+    rows = []
+    for city in CITY_ORDER:
+        row = {col: 0 for col in cols}
+        row["地區"] = city
+        city_records = [x for x in records if x.get("__city") == city and not _purchase_is_cancelled(x) and _purchase_is_reserve(x)]
+        for label, start, end in month_ranges:
+            selected = [x for x in city_records if start <= str(x.get("date_clean") or x.get("service_date") or "")[:10] <= end]
+            row[f"{label}保留單時數"] = sum(_purchase_person_hours(x) for x in selected)
+            row[f"{label}保留單業績"] = sum(_purchase_amount(x) for x in selected)
+        rows.append(row)
+    rows.append({"地區": "加總", **{col: sum(float(row[col]) for row in rows) for col in cols[1:]}})
+    return pd.DataFrame(rows, columns=cols)
+
+
+def build_net_performance_summary(raw_df: pd.DataFrame, reserve_df: pd.DataFrame, month_ranges) -> pd.DataFrame:
+    cols = ["地區"] + [f"{label}業績－保留單業績" for label, _, _ in month_ranges]
+    performance_df = build_month_performance_summary(raw_df, month_ranges)
+    rows = []
+    for city in CITY_ORDER:
+        row = {"地區": city}
+        reserve_row = reserve_df[reserve_df["地區"].astype(str) == city]
+        performance_row = performance_df[performance_df["地區"].astype(str) == city]
+        for label, _, _ in month_ranges:
+            gross = 0 if performance_row.empty else safe_int(performance_row.iloc[0].get(f"{label}業績", 0))
+            reserve = 0 if reserve_row.empty else safe_int(reserve_row.iloc[0].get(f"{label}保留單業績", 0))
+            row[f"{label}業績－保留單業績"] = gross - reserve
+        rows.append(row)
+    rows.append({"地區": "加總", **{col: sum(row[col] for row in rows) for col in cols[1:]}})
+    return pd.DataFrame(rows, columns=cols)
 
 
 def build_url(start, end, status, keyword=""):
@@ -753,24 +965,45 @@ def build_region4_email_html(df4):
     """
 
 
-def send_region4_email(df4, recipient="jenny@hers.com.tw"):
-    sender = "jenny@hers.com.tw"
-    password = "snmn bepg ncvc pxzt"
+def _email_setting(name: str, default=None):
+    value = os.getenv(name)
+    if value:
+        return value
+    try:
+        import streamlit as st
+        return st.secrets.get(name, default)
+    except Exception:
+        return default
 
-    today_str = datetime.today().strftime("%Y%m%d")
+
+def _split_email_recipients(raw: str) -> list[str]:
+    return [email.strip() for email in str(raw or "").replace(";", ",").split(",") if email.strip()]
+
+
+def send_region4_email(df4, recipient="jenny@hers.com.tw"):
+    sender = _email_setting("NOTIFY_EMAIL", "jenny@hers.com.tw")
+    password = _email_setting("NOTIFY_PASSWORD")
+    recipients = _split_email_recipients(_email_setting("NOTIFY_TO", recipient))
+
+    if not sender or not password or not recipients:
+        log("⚠️ 缺少 NOTIFY_EMAIL / NOTIFY_PASSWORD / NOTIFY_TO，略過寄信")
+        return False
+
+    today_str = now_dt().strftime("%Y%m%d")
     subject = f"業績報表{today_str}"
     html = build_region4_email_html(df4)
 
     msg = MIMEText(html, "html", "utf-8")
     msg["Subject"] = subject
     msg["From"] = sender
-    msg["To"] = recipient
+    msg["To"] = ", ".join(recipients)
 
     with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
         server.login(sender, password)
-        server.sendmail(sender, [recipient], msg.as_string())
+        server.sendmail(sender, recipients, msg.as_string())
 
-    log(f"✅ 已寄出：{recipient}")
+    log(f"✅ 已寄出：{', '.join(recipients)}")
+    return True
 
 
 def load_execution_log_for_current_month() -> pd.DataFrame:
@@ -829,6 +1062,14 @@ def persist_dashboard_payload(
     next_month_daily_df: pd.DataFrame,
     month_end_df: pd.DataFrame,
     email_html: str,
+    order_date_df: Optional[pd.DataFrame] = None,
+    month_performance_df: Optional[pd.DataFrame] = None,
+    reserve_df: Optional[pd.DataFrame] = None,
+    net_performance_df: Optional[pd.DataFrame] = None,
+    report_start_month: Optional[str] = None,
+    report_end_month: Optional[str] = None,
+    order_start_date: Optional[str] = None,
+    order_end_date: Optional[str] = None,
     error_msg: Optional[str] = None,
     trigger: str = "dashboard",
 ):
@@ -845,6 +1086,10 @@ def persist_dashboard_payload(
     latest_month_end = os.path.join(LATEST_DIR, "month_end_summary.csv")
     latest_html = os.path.join(LATEST_DIR, "email_preview.html")
     latest_meta = os.path.join(LATEST_DIR, "meta.json")
+    latest_order_date = os.path.join(LATEST_DIR, "order_date_summary.csv")
+    latest_month_performance = os.path.join(LATEST_DIR, "month_performance_summary.csv")
+    latest_reserve = os.path.join(LATEST_DIR, "reserve_summary.csv")
+    latest_net_performance = os.path.join(LATEST_DIR, "net_performance_summary.csv")
 
     log("===== 寫入 dashboard 檔案 =====")
     log(f"LATEST_DIR = {LATEST_DIR}")
@@ -867,6 +1112,16 @@ def persist_dashboard_payload(
     df4.to_csv(latest_df4, index=False, encoding="utf-8-sig")
     append_output_file_log("業績報表", latest_df4, trigger)
 
+    for report_df, report_path in [
+        (order_date_df, latest_order_date),
+        (month_performance_df, latest_month_performance),
+        (reserve_df, latest_reserve),
+        (net_performance_df, latest_net_performance),
+    ]:
+        if report_df is not None:
+            report_df.to_csv(report_path, index=False, encoding="utf-8-sig")
+            append_output_file_log("業績報表", report_path, trigger)
+
     daily_df.to_csv(latest_daily, index=False, encoding="utf-8-sig")
     append_output_file_log("業績報表", latest_daily, trigger)
 
@@ -887,6 +1142,14 @@ def persist_dashboard_payload(
         "daily_rows": int(len(daily_df)),
         "next_month_daily_rows": int(len(next_month_daily_df)),
         "month_end_rows": int(len(month_end_df)),
+        "order_date_rows": int(len(order_date_df)) if order_date_df is not None else 0,
+        "month_performance_rows": int(len(month_performance_df)) if month_performance_df is not None else 0,
+        "reserve_rows": int(len(reserve_df)) if reserve_df is not None else 0,
+        "net_performance_rows": int(len(net_performance_df)) if net_performance_df is not None else 0,
+        "report_start_month": report_start_month,
+        "report_end_month": report_end_month,
+        "order_start_date": order_start_date,
+        "order_end_date": order_end_date,
         "error": error_msg,
         "trigger": trigger,
     }
@@ -902,9 +1165,23 @@ def persist_dashboard_payload(
     snap_month_end = f"{snapshot_prefix}_month_end_summary.csv"
     snap_meta = f"{snapshot_prefix}_meta.json"
     snap_html = f"{snapshot_prefix}_email_preview.html"
+    snap_order_date = f"{snapshot_prefix}_order_date_summary.csv"
+    snap_month_performance = f"{snapshot_prefix}_month_performance_summary.csv"
+    snap_reserve = f"{snapshot_prefix}_reserve_summary.csv"
+    snap_net_performance = f"{snapshot_prefix}_net_performance_summary.csv"
 
     df4.to_csv(snap_df4, index=False, encoding="utf-8-sig")
     append_output_file_log("業績報表", snap_df4, trigger)
+
+    for report_df, report_path in [
+        (order_date_df, snap_order_date),
+        (month_performance_df, snap_month_performance),
+        (reserve_df, snap_reserve),
+        (net_performance_df, snap_net_performance),
+    ]:
+        if report_df is not None:
+            report_df.to_csv(report_path, index=False, encoding="utf-8-sig")
+            append_output_file_log("業績報表", report_path, trigger)
 
     daily_df.to_csv(snap_daily, index=False, encoding="utf-8-sig")
     append_output_file_log("業績報表", snap_daily, trigger)
@@ -925,12 +1202,41 @@ def persist_dashboard_payload(
     append_output_file_log("業績報表", snap_html, trigger)
 
 
-def generate_sales_report(send_email=False, persist_dashboard=True, trigger="dashboard"):
+def generate_sales_report(
+    send_email=False,
+    persist_dashboard=True,
+    trigger="dashboard",
+    report_start_month: Optional[str] = None,
+    report_end_month: Optional[str] = None,
+    order_start_date: Optional[str] = None,
+    order_end_date: Optional[str] = None,
+):
     log("🔥 開始業績報表")
 
     ensure_dirs()
     (m_start, m_end), (n_start, n_end) = get_ranges()
+    report_month_ranges = get_report_month_ranges(report_start_month, report_end_month)
+    today_text = now_dt().strftime("%Y-%m-%d")
+    order_start_date = order_start_date or today_text
+    order_end_date = order_end_date or today_text
+    if order_end_date < order_start_date:
+        raise ValueError("訂購日期迄日不可早於起日")
+
+    current_month_label = m_start[:7].replace("-", "/")
+    next_month_label = n_start[:7].replace("-", "/")
+    fetch_month_ranges = []
+    seen_months = set()
+    for month_range in [
+        (current_month_label, m_start, m_end),
+        (next_month_label, n_start, n_end),
+        *report_month_ranges,
+    ]:
+        if month_range[0] not in seen_months:
+            seen_months.add(month_range[0])
+            fetch_month_ranges.append(month_range)
     merged = {}
+    order_date_records = []
+    reserve_records = []
     city_errors = []
 
     enabled_cities = [city for city in CITY_ORDER if city in ACCOUNTS]
@@ -989,10 +1295,7 @@ def generate_sales_report(send_email=False, persist_dashboard=True, trigger="das
             login(session, acc["email"], acc["password"])
             city_row_count = 0
 
-            for label, (s, e) in {
-                "本月": (m_start, m_end),
-                "下月": (n_start, n_end),
-            }.items():
+            for label, s, e in fetch_month_ranges:
                 for status in [1, 0]:
                     for kw in get_keywords(city):
                         url = build_url(s, e, status, kw)
@@ -1045,6 +1348,29 @@ def generate_sales_report(send_email=False, persist_dashboard=True, trigger="das
                             merged[key]["已付款"] += row["已付款"]
                             merged[key]["待付款"] += row["待付款"]
 
+            try:
+                order_items = _fetch_purchase_items(
+                    session,
+                    date_s=order_start_date,
+                    date_e=order_end_date,
+                )
+                for item in order_items:
+                    item["__city"] = city
+                order_date_records.extend(order_items)
+
+                reserve_items = _fetch_purchase_items(
+                    session,
+                    clean_date_s=report_month_ranges[0][1],
+                    clean_date_e=report_month_ranges[-1][2],
+                )
+                for item in reserve_items:
+                    item["__city"] = city
+                reserve_records.extend(reserve_items)
+            except Exception as extra_exc:
+                msg = f"{city} 新增報表資料抓取失敗：{extra_exc}"
+                city_errors.append(msg)
+                log(f"⚠️ {msg}")
+
             if city_row_count == 0:
                 msg = f"{city}：登入成功，但沒有抓到任何表格資料"
                 city_errors.append(msg)
@@ -1055,7 +1381,11 @@ def generate_sales_report(send_email=False, persist_dashboard=True, trigger="das
             city_errors.append(msg)
             log(f"❌ {msg}")
 
-    raw_df = pd.DataFrame(merged.values())
+    report_raw_df = pd.DataFrame(merged.values())
+    raw_df = report_raw_df.copy()
+    if not raw_df.empty:
+        raw_df.loc[raw_df["月份"] == current_month_label, "月份"] = "本月"
+        raw_df.loc[raw_df["月份"] == next_month_label, "月份"] = "下月"
 
     if raw_df.empty:
         error_msg = "沒有任何資料可輸出"
@@ -1105,6 +1435,10 @@ def generate_sales_report(send_email=False, persist_dashboard=True, trigger="das
     df2 = build_region2_df(raw_df)
     df3 = build_region3_df(df2)
     df4 = build_region4_df(df2)
+    order_date_df = build_order_date_summary(order_date_records)
+    month_performance_df = build_month_performance_summary(report_raw_df, report_month_ranges)
+    reserve_df = build_reserve_summary(reserve_records, report_month_ranges)
+    net_performance_df = build_net_performance_summary(report_raw_df, reserve_df, report_month_ranges)
 
     hour = now_dt().hour
 
@@ -1136,12 +1470,28 @@ def generate_sales_report(send_email=False, persist_dashboard=True, trigger="das
     log(f"daily_df rows = {len(daily_df)}")
     log(f"next_month_daily_df rows = {len(next_month_daily_df)}")
     log(f"month_end_df rows = {len(month_end_df)}")
+    log(f"order_date_df rows = {len(order_date_df)}")
+    log(f"month_performance_df rows = {len(month_performance_df)}")
+    log(f"reserve_df rows = {len(reserve_df)}")
+    log(f"net_performance_df rows = {len(net_performance_df)}")
 
     email_html = build_region4_email_html(df4)
     error_msg = None if not city_errors else " / ".join(city_errors)
 
     if persist_dashboard:
-        persist_dashboard_payload(df4, daily_df, next_month_daily_df, month_end_df, email_html, error_msg, trigger=trigger)
+        persist_dashboard_payload(
+            df4, daily_df, next_month_daily_df, month_end_df, email_html,
+            order_date_df=order_date_df,
+            month_performance_df=month_performance_df,
+            reserve_df=reserve_df,
+            net_performance_df=net_performance_df,
+            report_start_month=report_month_ranges[0][0],
+            report_end_month=report_month_ranges[-1][0],
+            order_start_date=order_start_date,
+            order_end_date=order_end_date,
+            error_msg=error_msg,
+            trigger=trigger,
+        )
 
     if send_email:
         send_region4_email(df4)
@@ -1155,6 +1505,14 @@ def generate_sales_report(send_email=False, persist_dashboard=True, trigger="das
         "daily_df": daily_df,
         "next_month_daily_df": next_month_daily_df,
         "month_end_df": month_end_df,
+        "order_date_df": order_date_df,
+        "month_performance_df": month_performance_df,
+        "reserve_df": reserve_df,
+        "net_performance_df": net_performance_df,
+        "report_start_month": report_month_ranges[0][0],
+        "report_end_month": report_month_ranges[-1][0],
+        "order_start_date": order_start_date,
+        "order_end_date": order_end_date,
         "month_end_history_df": load_month_end_history(),
         "email_html": email_html,
         "updated_at": now_dt().strftime("%Y-%m-%d %H:%M:%S"),
@@ -1168,17 +1526,45 @@ def generate_sales_report(send_email=False, persist_dashboard=True, trigger="das
 def main():
     trigger = "schedule"
     send_email = True
+    report_start_month = None
+    report_end_month = None
+    order_start_date = None
+    order_end_date = None
 
-    if len(os.sys.argv) >= 2:
-        trigger = os.sys.argv[1]
+    cleaned_args = []
+    raw_args = os.sys.argv[1:]
+    index = 0
+    while index < len(raw_args):
+        arg = raw_args[index]
+        if arg in {"--start-month", "--end-month", "--order-start-date", "--order-end-date"}:
+            value = raw_args[index + 1] if index + 1 < len(raw_args) else ""
+            if arg == "--start-month":
+                report_start_month = value
+            elif arg == "--end-month":
+                report_end_month = value
+            elif arg == "--order-start-date":
+                order_start_date = value
+            elif arg == "--order-end-date":
+                order_end_date = value
+            index += 2
+            continue
+        cleaned_args.append(arg)
+        index += 1
 
-    if len(os.sys.argv) >= 3:
-        send_email = os.sys.argv[2].lower() in ("1", "true", "yes", "y")
+    if len(cleaned_args) >= 1:
+        trigger = cleaned_args[0]
+
+    if len(cleaned_args) >= 2:
+        send_email = cleaned_args[1].lower() in ("1", "true", "yes", "y")
 
     generate_sales_report(
         send_email=send_email,
         persist_dashboard=True,
         trigger=trigger,
+        report_start_month=report_start_month,
+        report_end_month=report_end_month,
+        order_start_date=order_start_date,
+        order_end_date=order_end_date,
     )
 
 

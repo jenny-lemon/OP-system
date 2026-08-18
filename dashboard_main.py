@@ -148,10 +148,18 @@ def render_sales_page():
 
     if update_btn:
         with st.spinner("更新資料中…"):
+            order_start = st.session_state.get("performance_order_start_date")
+            order_end = st.session_state.get("performance_order_end_date")
+            month_start = st.session_state.get("performance_report_start_month")
+            month_end = st.session_state.get("performance_report_end_month")
             result = generate_sales_report(
                 send_email=False,
                 persist_dashboard=False,
-                trigger="dashboard"
+                trigger="dashboard",
+                order_start_date=order_start.strftime("%Y-%m-%d") if order_start else None,
+                order_end_date=order_end.strftime("%Y-%m-%d") if order_end else None,
+                report_start_month=month_start.strftime("%Y-%m") if month_start else None,
+                report_end_month=month_end.strftime("%Y-%m") if month_end else None,
             )
 
     if result is not None:
