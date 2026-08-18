@@ -160,6 +160,7 @@ def render_sales_page():
                 order_end_date=order_end.strftime("%Y-%m-%d") if order_end else None,
                 report_start_month=month_start.strftime("%Y-%m") if month_start else None,
                 report_end_month=month_end.strftime("%Y-%m") if month_end else None,
+                include_extra_reports=False,
             )
 
     if result is not None:
