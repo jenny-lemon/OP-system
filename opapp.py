@@ -829,32 +829,38 @@ def _month_date(value, fallback):
         return fallback
 
 
-def _run_filtered_performance_report():
+def _run_filtered_performance_report(scope: str):
     today = datetime.now(TZ_TAIPEI).date()
     order_start = st.session_state.get("performance_order_start_date", today)
     order_end = st.session_state.get("performance_order_end_date", today)
     month_start = st.session_state.get("performance_report_start_month", today.replace(day=1))
     month_end = st.session_state.get("performance_report_end_month", today.replace(day=1))
 
-    if order_start > order_end:
+    if scope == "order" and order_start > order_end:
         st.error("訂購日期迄日不可早於起日")
         return
-    if month_start.replace(day=1) > month_end.replace(day=1):
+    if scope == "month" and month_start.replace(day=1) > month_end.replace(day=1):
         st.error("結束月份不可早於起始月份")
         return
 
-    with st.spinner("正在重新統整業績資料…"):
-        result = _performance_report.generate_sales_report(
-            send_email=False,
-            persist_dashboard=True,
-            trigger="dashboard",
-            order_start_date=order_start.strftime("%Y-%m-%d"),
-            order_end_date=order_end.strftime("%Y-%m-%d"),
-            report_start_month=month_start.strftime("%Y-%m"),
-            report_end_month=month_end.strftime("%Y-%m"),
-        )
-    if result.get("error"):
-        st.warning(result["error"])
+    if scope == "order":
+        with st.spinner("正在更新付款彙總…"):
+            _performance_report.generate_order_date_report(
+                order_start.strftime("%Y-%m-%d"),
+                order_end.strftime("%Y-%m-%d"),
+                trigger="dashboard",
+            )
+    elif scope == "month":
+        with st.spinner("正在更新月份業績與保留單…"):
+            result = _performance_report.generate_month_range_reports(
+                month_start.strftime("%Y-%m"),
+                month_end.strftime("%Y-%m"),
+                trigger="dashboard",
+            )
+        if result.get("error"):
+            st.warning(result["error"])
+    else:
+        raise ValueError(f"未知報表更新範圍：{scope}")
     st.rerun()
 
 
@@ -889,7 +895,7 @@ def render_order_date_report_tab():
     if order_start > order_end:
         st.error("訂購日期迄日不可早於起日")
     if st.button("✅ 確定並套用訂購日期區間", key="apply_order_date_range", use_container_width=True):
-        _run_filtered_performance_report()
+        _run_filtered_performance_report("order")
     st.caption("預設起迄日皆為當日；取消單不列入，結果依地區統計未付款、已付款及合計。")
     _show_summary_csv("order_date_summary.csv", "尚未產生付款彙總，請選擇日期後按確定。")
 
@@ -921,7 +927,7 @@ def render_month_performance_report_tab():
     if month_start.replace(day=1) > month_end.replace(day=1):
         st.error("結束月份不可早於起始月份")
     if st.button("✅ 確定並套用月份區間", key="apply_month_range", use_container_width=True):
-        _run_filtered_performance_report()
+        _run_filtered_performance_report("month")
     st.caption("起迄月份均包含在統計範圍內，最多可選 24 個月。")
 
     st.markdown('<div class="section-card"><div class="section-title">➖ 該月業績－該月保留單業績</div>', unsafe_allow_html=True)
