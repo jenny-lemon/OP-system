@@ -29,7 +29,7 @@ st.set_page_config(
     layout="wide",
 )
 
-OPAPP_VERSION = "2026-05-04-force-persist-v1"
+OPAPP_VERSION = "2026-08-19-three-report-tabs-v1"
 
 TZ_TAIPEI = timezone(timedelta(hours=8))
 
@@ -395,8 +395,11 @@ def _format_report_df(df: pd.DataFrame) -> pd.DataFrame:
     out = df.copy()
     for col in out.columns:
         col_text = str(col)
-        if any(k in col_text for k in ["業績", "合計", "總業績", "加總"]):
+        if any(k in col_text for k in ["業績", "合計", "總業績", "加總", "付款"]):
             out[col] = pd.to_numeric(out[col], errors="coerce").fillna(0).astype(int).map(lambda x: f"{x:,}")
+        if "時數" in col_text:
+            nums = pd.to_numeric(out[col], errors="coerce").fillna(0)
+            out[col] = nums.map(lambda x: f"{int(x):,}" if float(x).is_integer() else f"{x:,.1f}")
         if "佔比" in col_text:
             nums = pd.to_numeric(out[col], errors="coerce")
             out[col] = nums.map(lambda x: "" if pd.isna(x) else f"{x:.2%}")
@@ -452,7 +455,7 @@ def _show_deletable_csv_section(
             else:
                 st.warning("沒有刪除任何資料，請先勾選紀錄。")
 
-    st.dataframe(_format_report_df(df), use_container_width=True, hide_index=True)
+    st.dataframe(_format_report_df(df), use_container_width=True, hide_index=True, height=360)
 
 def _show_csv_section(title: str, path: str, empty_msg: str):
     _show_deletable_csv_section(title, path, empty_msg, key_prefix=title.replace(" ", "_"))
@@ -796,10 +799,146 @@ def render_monthly_tracking_tabs():
         _show_month_end_snapshot_tab()
 
 
+def _load_report_meta() -> dict:
+    path = os.path.join(LATEST_DIR, "meta.json")
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def _month_date(value, fallback):
+    text = str(value or "").replace("/", "-")
+    try:
+        return datetime.strptime(text, "%Y-%m").date()
+    except Exception:
+        return fallback
+
+
+def _run_filtered_performance_report():
+    today = datetime.now(TZ_TAIPEI).date()
+    order_start = st.session_state.get("performance_order_start_date", today)
+    order_end = st.session_state.get("performance_order_end_date", today)
+    month_start = st.session_state.get("performance_report_start_month", today.replace(day=1))
+    month_end = st.session_state.get("performance_report_end_month", today.replace(day=1))
+
+    if order_start > order_end:
+        st.error("訂購日期迄日不可早於起日")
+        return
+    if month_start.replace(day=1) > month_end.replace(day=1):
+        st.error("結束月份不可早於起始月份")
+        return
+
+    with st.spinner("正在重新統整業績資料…"):
+        result = _performance_report.generate_sales_report(
+            send_email=False,
+            persist_dashboard=True,
+            trigger="dashboard",
+            order_start_date=order_start.strftime("%Y-%m-%d"),
+            order_end_date=order_end.strftime("%Y-%m-%d"),
+            report_start_month=month_start.strftime("%Y-%m"),
+            report_end_month=month_end.strftime("%Y-%m"),
+        )
+    if result.get("error"):
+        st.warning(result["error"])
+    st.rerun()
+
+
+def _show_summary_csv(filename: str, empty_message: str):
+    df = _read_csv_safe(os.path.join(LATEST_DIR, filename))
+    if df.empty:
+        st.info(empty_message)
+        return
+    st.dataframe(_format_report_df(df), use_container_width=True, hide_index=True, height=360)
+
+
+def render_order_date_report_tab():
+    today = datetime.now(TZ_TAIPEI).date()
+    st.markdown(
+        '<div class="page-header"><div class="page-title">訂購日期付款彙總</div>'
+        '<div class="page-subtitle">ORDER DATE / PAYMENT</div></div>',
+        unsafe_allow_html=True,
+    )
+    cols = st.columns(2)
+    with cols[0]:
+        order_start = st.date_input(
+            "訂購日期－起",
+            value=today,
+            key="performance_order_start_date",
+        )
+    with cols[1]:
+        order_end = st.date_input(
+            "訂購日期－迄",
+            value=today,
+            key="performance_order_end_date",
+        )
+    if order_start > order_end:
+        st.error("訂購日期迄日不可早於起日")
+    if st.button("✅ 確定並套用訂購日期區間", key="apply_order_date_range", use_container_width=True):
+        _run_filtered_performance_report()
+    st.caption("預設起迄日皆為當日；取消單不列入，結果依地區統計未付款、已付款及合計。")
+    _show_summary_csv("order_date_summary.csv", "尚未產生付款彙總，請選擇日期後按確定。")
+
+
+def render_month_performance_report_tab():
+    meta = _load_report_meta()
+    current_month = datetime.now(TZ_TAIPEI).date().replace(day=1)
+    default_start = _month_date(meta.get("report_start_month"), current_month)
+    default_end = _month_date(meta.get("report_end_month"), default_start)
+
+    st.markdown(
+        '<div class="page-header"><div class="page-title">月份業績統整</div>'
+        '<div class="page-subtitle">PERFORMANCE / RESERVE</div></div>',
+        unsafe_allow_html=True,
+    )
+    cols = st.columns(2)
+    with cols[0]:
+        month_start = st.date_input(
+            "起始月份（日期只取年月）",
+            value=default_start,
+            key="performance_report_start_month",
+        )
+    with cols[1]:
+        month_end = st.date_input(
+            "結束月份（日期只取年月）",
+            value=default_end,
+            key="performance_report_end_month",
+        )
+    if month_start.replace(day=1) > month_end.replace(day=1):
+        st.error("結束月份不可早於起始月份")
+    if st.button("✅ 確定並套用月份區間", key="apply_month_range", use_container_width=True):
+        _run_filtered_performance_report()
+    st.caption("起迄月份均包含在統計範圍內，最多可選 24 個月。")
+
+    st.markdown('<div class="section-card"><div class="section-title">➖ 該月業績－該月保留單業績</div>', unsafe_allow_html=True)
+    _show_summary_csv("net_performance_summary.csv", "尚未產生扣除後業績，請先套用月份區間。")
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    st.markdown('<div class="section-card"><div class="section-title">📊 該月業績報表</div>', unsafe_allow_html=True)
+    _show_summary_csv("month_performance_summary.csv", "尚未產生該月業績，請先套用月份區間。")
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    st.markdown('<div class="section-card"><div class="section-title">🕒 該月保留單業績</div>', unsafe_allow_html=True)
+    st.caption("保留單時數以『人數 × 每人服務時數』計算。")
+    _show_summary_csv("reserve_summary.csv", "尚未產生保留單業績，請先套用月份區間。")
+    st.markdown("</div>", unsafe_allow_html=True)
+
+
 def render_performance_report_page():
-    _render_page_without_builtin_daily_overview()
-    render_monthly_tracking_tabs()
-    render_email_preview_section()
+    current_tab, order_tab, month_tab = st.tabs([
+        "📍 目前總表",
+        "🧾 訂購日期付款彙總",
+        "📅 月份業績統整",
+    ])
+    with current_tab:
+        _render_page_without_builtin_daily_overview()
+        render_monthly_tracking_tabs()
+        render_email_preview_section()
+    with order_tab:
+        render_order_date_report_tab()
+    with month_tab:
+        render_month_performance_report_tab()
 
 
 render_performance_report_page()
