@@ -13,7 +13,20 @@ import performance_report as _performance_report
 LATEST_DIR = _performance_report.LATEST_DIR
 DAILY_HISTORY_DIR = _performance_report.DAILY_HISTORY_DIR
 
-_ORIGINAL_GENERATE_SALES_REPORT = _performance_report.generate_sales_report
+# Streamlit 會在同一個 Python process 內重跑本檔案；原函式必須只保存一次。
+# 若每次 rerun 都從已包裝的 generate_sales_report 再取一次，就會形成無限遞迴。
+_ORIGINAL_GENERATE_ATTR = "_opapp_original_generate_sales_report"
+if not hasattr(_performance_report, _ORIGINAL_GENERATE_ATTR):
+    setattr(
+        _performance_report,
+        _ORIGINAL_GENERATE_ATTR,
+        _performance_report.generate_sales_report,
+    )
+
+_ORIGINAL_GENERATE_SALES_REPORT = getattr(
+    _performance_report,
+    _ORIGINAL_GENERATE_ATTR,
+)
 
 def _generate_sales_report_force_persist(*args, **kwargs):
     kwargs["persist_dashboard"] = True
