@@ -1,1 +1,13 @@
-1
+[theme]
+base = "light"
+primaryColor = "#2563eb"
+backgroundColor = "#f0f2f6"
+secondaryBackgroundColor = "#ffffff"
+textColor = "#1e293b"
+borderColor = "#e2e8f0"
+baseRadius = "0.65rem"
+buttonRadius = "0.5rem"
+font = "DM Sans, sans-serif"
+dataframeBorderColor = "#e8ecf0"
+dataframeHeaderBackgroundColor = "#f8fafc"
+linkColor = "#2563eb"
