@@ -239,22 +239,24 @@ def _purchase_person_hours(item) -> float:
     return people * hours
 
 
-def build_order_date_summary(raw_df: pd.DataFrame) -> pd.DataFrame:
+def build_order_date_summary(raw_df: pd.DataFrame, order_rows=None) -> pd.DataFrame:
     """依地區統計待付款／已付款／合計，待付款/已付款底下再依「服務日期」動態拆出月份欄位，
     並把「儲值金」拆成同一列裡的獨立欄位（只分待付款/已付款，不拆月份）。
 
     raw_df 跟 build_month_performance_summary() 吃的是同一種資料形狀（城市/收入類型/
-    服務/已付款/待付款/日期，來自同一個報表頁面的 parse_html() 結果，只差在查詢時用
-    「訂購日期」而不是「清潔／服務日期」），用同一套 to_category()／detect_income_type()
-    分類，才會跟「目前總表」的儲值金判斷邏輯一致；「日期」欄位是 parse_html() 從報表
-    的「服務日期」欄位取得的（見 date_candidates），所以可以直接拿來分月份。
+    服務/已付款/待付款，來自同一個報表頁面裡「財務彙總表」的 parse_html() 結果），用
+    to_category()／detect_income_type() 分類，才會跟「目前總表」的儲值金判斷邏輯一致，
+    是「待付款/已付款/儲值金待付款/儲值金已付款」這幾個總額欄位唯一的資料來源。
+
+    財務彙總表本身沒有服務日期（依服務分類彙總，不是逐筆訂單），服務日期要另外從
+    同一頁裡的「訂單列表」表格（訂購資訊/服務日期/付款資訊）取得，所以月份拆分改吃
+    order_rows：list of {"城市","日期","已付款","待付款","是否儲值金"}（見
+    _parse_order_list_rows()）。月份欄位只影響「待付款/已付款」底下的動態拆分，不影響
+    地區/加總/儲值金這幾個主要欄位的數字（那些永遠以 raw_df 為準）；order_rows 缺漏或
+    抓不到服務日期時，就不會有月份欄位，不會出錯，也不會動到主要欄位的數字。
 
     月份欄位是動態的：查詢結果裡的訂單，服務日期落在幾個不同月份，就出現幾組
-    「{月份}待付款/{月份}已付款」欄位，按時間排序。
-
-    儲值金儲值單是預收款，不是清潔服務業績，所以不計入「待付款/已付款」，改成同一個
-    地區列裡的「儲值金待付款/儲值金已付款」欄位（跟「目前總表」把儲值金當成每個地區
-    的一個欄位、而不是另外一列，是同一種呈現方式）。
+    「{月份}待付款/{月份}已付款」欄位，按時間排序。儲值金不拆月份，只分待付款/已付款。
     """
     base_cols = ["地區", "待付款", "已付款", "待付款＋已付款"]
     stored_value_cols = ["儲值金待付款", "儲值金已付款", "儲值金待付款＋已付款"]
@@ -269,8 +271,13 @@ def build_order_date_summary(raw_df: pd.DataFrame) -> pd.DataFrame:
     service_df = work[work["類別"] != "儲值金"].copy()
     stored_value_df = work[(work["收入類型"] == "現金收入") & (work["類別"] == "儲值金")]
 
-    service_df["服務月份"] = pd.to_datetime(service_df["日期"], errors="coerce").dt.strftime("%Y/%m")
-    months = sorted(service_df["服務月份"].dropna().unique().tolist())
+    order_df = pd.DataFrame(order_rows) if order_rows else pd.DataFrame()
+    months = []
+    if not order_df.empty and "日期" in order_df.columns:
+        order_df = order_df[~order_df.get("是否儲值金", False).astype(bool)].copy()
+        order_df["服務月份"] = pd.to_datetime(order_df["日期"], errors="coerce").dt.strftime("%Y/%m")
+        order_df = order_df.dropna(subset=["服務月份"])
+        months = sorted(order_df["服務月份"].unique().tolist())
     month_cols = [f"{m}{kind}" for m in months for kind in ("待付款", "已付款")]
 
     cols = base_cols + month_cols + stored_value_cols
@@ -288,9 +295,9 @@ def build_order_date_summary(raw_df: pd.DataFrame) -> pd.DataFrame:
             "待付款＋已付款": unpaid + paid,
         }
         for m in months:
-            m_sub = svc_sub[svc_sub["服務月份"] == m]
-            row[f"{m}待付款"] = m_sub["待付款"].sum()
-            row[f"{m}已付款"] = m_sub["已付款"].sum()
+            m_sub = order_df[(order_df["城市"] == city) & (order_df["服務月份"] == m)] if not order_df.empty else order_df
+            row[f"{m}待付款"] = m_sub["待付款"].sum() if not m_sub.empty else 0
+            row[f"{m}已付款"] = m_sub["已付款"].sum() if not m_sub.empty else 0
         sv_unpaid = sv_sub["待付款"].sum()
         sv_paid = sv_sub["已付款"].sum()
         row["儲值金待付款"] = sv_unpaid
@@ -304,6 +311,69 @@ def build_order_date_summary(raw_df: pd.DataFrame) -> pd.DataFrame:
         **{c: out[c].sum() for c in cols[1:]},
     }])], ignore_index=True)
     return out[cols]
+
+
+def _parse_order_list_rows(html):
+    """解析「訂購資訊/服務日期/付款資訊」訂單列表表格，逐筆訂單取出服務日期、金額與
+    付款狀態，供 build_order_date_summary() 依服務日期拆月份用。
+
+    這張表跟 parse_html() 解析的財務彙總表是同一個報表頁面裡的另一張表——彙總表是
+    依服務分類彙總、沒有服務日期；這張表才有逐筆訂單的服務日期，但金額／付款狀態是
+    「付款資訊」欄位裡的一段文字（例如「總金額：4200 ... 付款狀態：已付款」），不是
+    獨立欄位，所以用正規表示式取值，比對得到才算數，比對不到就跳過那一筆（只影響
+    月份拆分細節，不影響 build_order_date_summary() 的地區/加總/儲值金主要欄位）。
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    tables = soup.find_all("table")
+    results = []
+
+    amount_re = re.compile(r"總金額\s*[:：]\s*([\d,]+)")
+    status_re = re.compile(r"付款狀態\s*[:：]\s*([^\s]+)")
+
+    for table in tables:
+        trs = table.find_all("tr")
+        rows = []
+        for tr in trs:
+            cells = tr.find_all(["th", "td"])
+            row = [c.get_text(" ", strip=True) for c in cells]
+            if any(str(x).strip() for x in row):
+                rows.append(row)
+        if not rows:
+            continue
+
+        header = [str(x).strip() for x in rows[0]]
+        if "服務日期" not in header or "付款資訊" not in header:
+            continue
+
+        date_idx = header.index("服務日期")
+        pay_idx = header.index("付款資訊")
+        order_idx = header.index("訂購資訊") if "訂購資訊" in header else None
+
+        for row in rows[1:]:
+            if len(row) <= date_idx or len(row) <= pay_idx:
+                continue
+            order_text = row[order_idx] if order_idx is not None and len(row) > order_idx else ""
+            pay_text = row[pay_idx]
+
+            status_m = status_re.search(pay_text)
+            status_text = status_m.group(1) if status_m else ""
+            if "退款" in status_text or "取消" in status_text:
+                continue
+
+            amount_m = amount_re.search(pay_text)
+            if not amount_m:
+                continue
+            amount = safe_int(amount_m.group(1))
+            is_paid = "已付款" in status_text
+
+            results.append({
+                "日期": normalize_date_text(row[date_idx]),
+                "已付款": amount if is_paid else 0,
+                "待付款": 0 if is_paid else amount,
+                "是否儲值金": "儲值金-" in order_text,
+            })
+
+    return results
 
 
 def build_month_performance_summary(raw_df: pd.DataFrame, month_ranges) -> pd.DataFrame:
@@ -412,6 +482,7 @@ def generate_order_date_report(order_start_date: str, order_end_date: str, trigg
         account = ACCOUNTS[city]
         login(session, account["email"], account["password"])
         merged = {}
+        order_rows = []
         for status in [1, 0]:
             for keyword in get_keywords(city):
                 response = session.get(
@@ -430,12 +501,17 @@ def generate_order_date_report(order_start_date: str, order_end_date: str, trigg
                         }
                     merged[key]["已付款"] += row["已付款"]
                     merged[key]["待付款"] += row["待付款"]
-        return list(merged.values())
+                # 財務彙總表沒有服務日期，另外從同一頁的訂單列表表格取得，只用來拆月份。
+                for item in _parse_order_list_rows(response.text):
+                    item["城市"] = city
+                    order_rows.append(item)
+        return list(merged.values()), order_rows
 
     city_results, errors = _parallel_city_results(worker)
-    raw_rows = [row for _, rows in city_results for row in rows]
+    raw_rows = [row for _, (rows, _) in city_results for row in rows]
+    order_rows = [item for _, (_, items) in city_results for item in items]
     raw_df = pd.DataFrame(raw_rows)
-    out = build_order_date_summary(raw_df)
+    out = build_order_date_summary(raw_df, order_rows=order_rows)
     ensure_dirs()
     path = os.path.join(LATEST_DIR, "order_date_summary.csv")
     out.to_csv(path, index=False, encoding="utf-8-sig")
