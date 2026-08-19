@@ -12,44 +12,44 @@ def test_configurable_month_ranges_cross_year():
     ]
 
 
-def test_order_date_summary_excludes_cancelled_orders():
-    records = [
-        {"__city": "台北", "total": "1,000", "purchase_status": "0"},
-        {"__city": "台北", "total": "2,000", "purchase_status": "1"},
-        {"__city": "台中", "total": 500, "purchase_status": "0"},
-        {"__city": "台北", "total": 999, "purchase_status": "1", "cancel_at": "2026-08-18"},
-    ]
-    out = report.build_order_date_summary(records)
+def test_order_date_summary_groups_by_city_and_totals():
+    # 跟 build_month_performance_summary 共用同一種 raw_df 形狀（來自同一個報表頁面的
+    # parse_html() 結果），只是這裡不分月份。
+    raw_df = pd.DataFrame([
+        {"城市": "台北", "收入類型": "現金收入", "服務": "居家清潔", "已付款": 2000, "待付款": 1000},
+        {"城市": "台中", "收入類型": "現金收入", "服務": "居家清潔", "已付款": 0, "待付款": 500},
+    ])
+    out = report.build_order_date_summary(raw_df)
     assert out.iloc[0].to_dict() == {
         "地區": "台北", "未付款": 1000, "已付款": 2000, "未付款＋已付款": 3000,
     }
-    assert out.iloc[-1].to_dict() == {
+    total_row = out[out["地區"] == "加總"].iloc[0]
+    assert total_row.to_dict() == {
         "地區": "加總", "未付款": 1500, "已付款": 2000, "未付款＋已付款": 3500,
     }
+    assert "儲值金" not in out["地區"].tolist()
 
 
 def test_order_date_summary_splits_out_stored_value_topups():
-    records = [
-        {"__city": "台北", "total": "1,000", "purchase_status": "0"},
-        {"__city": "台北", "total": "2,000", "purchase_status": "1"},
-        {"__city": "台中", "total": 500, "purchase_status": "0"},
-        # 儲值金訂單本身：購買項目顯示「儲值金-地區(...)」，待付款。實際欄位名稱未知，
-        # 用一個任意欄位名稱模擬，驗證偵測不依賴特定欄位。
-        {"__city": "台北", "total": 50000, "purchase_status": "0", "info_html": '<span style="color: orange;">儲值金-台北(儲值金50,000贈購物金2,500)</span>'},
-        # 同上，已付款。
-        {"__city": "桃園", "total": 30000, "purchase_status": "1", "info_html": "儲值金-桃園(儲值金30,000)"},
-        # 用儲值金「付款」的清潔訂單：付款方式是儲值金，但購買項目是居家清潔，不能被當成儲值單。
-        {"__city": "台北", "total": 2800, "purchase_status": "1", "buy": "居家清潔", "payway": "儲值金"},
-    ]
-    out = report.build_order_date_summary(records)
+    raw_df = pd.DataFrame([
+        # 一般清潔訂單，即使是用儲值金付款，服務分類仍然是「清潔」，要留在地區/加總。
+        {"城市": "台北", "收入類型": "現金收入", "服務": "居家清潔", "已付款": 2800, "待付款": 0},
+        {"城市": "台中", "收入類型": "現金收入", "服務": "居家清潔", "已付款": 0, "待付款": 500},
+        # 儲值金儲值單：raw_df 裡的「服務」欄位已經是 parse_html() 正規化過的值
+        # （原始表頭「VIP」會被 normalize_service 轉成「儲值金」），收入類型是「現金收入」
+        # ——跟「目前總表」判斷儲值金的邏輯完全相同。
+        {"城市": "台北", "收入類型": "現金收入", "服務": "儲值金", "已付款": 0, "待付款": 50000},
+        {"城市": "桃園", "收入類型": "現金收入", "服務": "儲值金", "已付款": 30000, "待付款": 0},
+    ])
+    out = report.build_order_date_summary(raw_df)
 
     assert out.iloc[0].to_dict() == {
-        "地區": "台北", "未付款": 1000, "已付款": 2000 + 2800, "未付款＋已付款": 1000 + 2000 + 2800,
+        "地區": "台北", "未付款": 0, "已付款": 2800, "未付款＋已付款": 2800,
     }
 
     total_row = out[out["地區"] == "加總"].iloc[0]
     assert total_row.to_dict() == {
-        "地區": "加總", "未付款": 1500, "已付款": 4800, "未付款＋已付款": 6300,
+        "地區": "加總", "未付款": 500, "已付款": 2800, "未付款＋已付款": 3300,
     }
 
     stored_value_row = out.iloc[-1]
