@@ -501,8 +501,15 @@ def generate_order_date_report(order_start_date: str, order_end_date: str, trigg
                         }
                     merged[key]["已付款"] += row["已付款"]
                     merged[key]["待付款"] += row["待付款"]
-                # 財務彙總表沒有服務日期，另外從同一頁的訂單列表表格取得，只用來拆月份。
-                for item in _parse_order_list_rows(response.text):
+                # 財務彙總表（p_board=on）沒有服務日期，服務日期只在不帶 p_board 的
+                # 訂單列表頁面才有，兩種頁面互斥，所以另外發一次請求取得。
+                board_off_response = session.get(
+                    build_url(order_start_date, order_end_date, status, keyword,
+                              use_order_date=True, include_board=False),
+                    headers=HEADERS, allow_redirects=True,
+                )
+                board_off_response.raise_for_status()
+                for item in _parse_order_list_rows(board_off_response.text):
                     item["城市"] = city
                     order_rows.append(item)
         return list(merged.values()), order_rows
@@ -594,12 +601,17 @@ def generate_month_range_reports(report_start_month: str, report_end_month: str,
     }
 
 
-def build_url(start, end, status, keyword="", use_order_date=False):
+def build_url(start, end, status, keyword="", use_order_date=False, include_board=True):
     """組出報表頁查詢網址。
 
     預設用「清潔／服務日期」（clean_date_s/clean_date_e）篩選，這是「月份業績統整」
     在用的欄位。use_order_date=True 時改填「訂購日期」（date_s/date_e），這是
     「訂購日期付款彙總」在用的欄位——兩者是同一個報表頁面，欄位不同而已。
+
+    include_board 控制是否帶入 p_board=on：後端用這個參數切換兩種互斥的頁面內容
+    ——勾選（on）時回傳「財務彙總表」（已付款金額/待付款金額，依服務分類彙總，
+    parse_html() 在解析這個）；不勾選時回傳「訂單列表」（訂購資訊/服務日期/付款
+    資訊，逐筆訂單，_parse_order_list_rows() 在解析這個，只有這裡才有服務日期）。
     """
     params = {
         "keyword": keyword,
@@ -618,7 +630,6 @@ def build_url(start, end, status, keyword="", use_order_date=False):
         "area_id": "",
         "isCharge": "",
         "isRefund": "",
-        "p_board": "on",
         "payway": "",
         "purchase_status": str(status),
         "progress_status": "",
@@ -626,6 +637,8 @@ def build_url(start, end, status, keyword="", use_order_date=False):
         "otherFee": "",
         "orderBy": "",
     }
+    if include_board:
+        params["p_board"] = "on"
     return requests.Request("GET", PURCHASE_URL, params=params).prepare().url
 
 

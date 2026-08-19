@@ -492,18 +492,31 @@ def _sort_report_rows_for_display(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _format_report_df(df: pd.DataFrame) -> pd.DataFrame:
+    # 保留數值型別（不轉成千分位字串），這樣 st.dataframe 才會用它原生的數字欄位
+    # 靠右對齊；千分位、百分比等顯示格式改由 _report_column_config() 的
+    # column_config 負責。
     out = df.copy()
     for col in out.columns:
         col_text = str(col)
         if any(k in col_text for k in ["業績", "合計", "總業績", "加總", "付款"]):
-            out[col] = pd.to_numeric(out[col], errors="coerce").fillna(0).astype(int).map(lambda x: f"{x:,}")
-        if "時數" in col_text:
-            nums = pd.to_numeric(out[col], errors="coerce").fillna(0)
-            out[col] = nums.map(lambda x: f"{int(x):,}" if float(x).is_integer() else f"{x:,.1f}")
-        if "佔比" in col_text:
-            nums = pd.to_numeric(out[col], errors="coerce")
-            out[col] = nums.map(lambda x: "" if pd.isna(x) else f"{x:.2%}")
+            out[col] = pd.to_numeric(out[col], errors="coerce").fillna(0).astype(int)
+        elif "時數" in col_text:
+            out[col] = pd.to_numeric(out[col], errors="coerce").fillna(0)
+        elif "佔比" in col_text:
+            out[col] = pd.to_numeric(out[col], errors="coerce")
     return out
+
+
+def _report_column_config(df: pd.DataFrame) -> dict:
+    """讓數字欄位在 st.dataframe 用原生 NumberColumn 呈現，靠右對齊、帶千分位。"""
+    config = {}
+    for col in df.columns:
+        col_text = str(col)
+        if "佔比" in col_text:
+            config[col] = st.column_config.NumberColumn(col_text, format="percent")
+        elif "時數" in col_text or any(k in col_text for k in ["業績", "合計", "總業績", "加總", "付款"]):
+            config[col] = st.column_config.NumberColumn(col_text, format="localized")
+    return config
 
 
 def _delete_rows_from_csv(path: str, selected_ids) -> bool:
@@ -555,7 +568,10 @@ def _show_deletable_csv_section(
             else:
                 st.warning("沒有刪除任何資料，請先勾選紀錄。")
 
-    st.dataframe(_format_report_df(df), use_container_width=True, hide_index=True, height=360)
+    st.dataframe(
+        _format_report_df(df), use_container_width=True, hide_index=True, height=360,
+        column_config=_report_column_config(df),
+    )
 
 def _show_csv_section(title: str, path: str, empty_msg: str):
     _show_deletable_csv_section(title, path, empty_msg, key_prefix=title.replace(" ", "_"))
@@ -957,7 +973,10 @@ def _show_summary_csv(filename: str, empty_message: str):
     if df.empty:
         st.info(empty_message)
         return
-    st.dataframe(_format_report_df(df), use_container_width=True, hide_index=True, height=360)
+    st.dataframe(
+        _format_report_df(df), use_container_width=True, hide_index=True, height=360,
+        column_config=_report_column_config(df),
+    )
 
 
 def render_order_date_report_tab():
