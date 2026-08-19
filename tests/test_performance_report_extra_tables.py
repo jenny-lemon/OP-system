@@ -33,10 +33,11 @@ def test_order_date_summary_splits_out_stored_value_topups():
         {"__city": "台北", "total": "1,000", "purchase_status": "0"},
         {"__city": "台北", "total": "2,000", "purchase_status": "1"},
         {"__city": "台中", "total": 500, "purchase_status": "0"},
-        # 儲值金訂單本身：購買項目開頭是「儲值金」，待付款。
-        {"__city": "台北", "total": 50000, "purchase_status": "0", "buy": "儲值金-台北(儲值金50,000贈購物金2,500)"},
-        # 儲值金訂單本身：購買項目開頭是「儲值金」，已付款。
-        {"__city": "桃園", "total": 30000, "purchase_status": "1", "buy": "儲值金-桃園(儲值金30,000)"},
+        # 儲值金訂單本身：購買項目顯示「儲值金-地區(...)」，待付款。實際欄位名稱未知，
+        # 用一個任意欄位名稱模擬，驗證偵測不依賴特定欄位。
+        {"__city": "台北", "total": 50000, "purchase_status": "0", "info_html": '<span style="color: orange;">儲值金-台北(儲值金50,000贈購物金2,500)</span>'},
+        # 同上，已付款。
+        {"__city": "桃園", "total": 30000, "purchase_status": "1", "info_html": "儲值金-桃園(儲值金30,000)"},
         # 用儲值金「付款」的清潔訂單：付款方式是儲值金，但購買項目是居家清潔，不能被當成儲值單。
         {"__city": "台北", "total": 2800, "purchase_status": "1", "buy": "居家清潔", "payway": "儲值金"},
     ]
