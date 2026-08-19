@@ -22,39 +22,47 @@ def test_order_date_summary_groups_by_city_and_totals():
     out = report.build_order_date_summary(raw_df)
     assert out.iloc[0].to_dict() == {
         "地區": "台北", "未付款": 1000, "已付款": 2000, "未付款＋已付款": 3000,
+        "儲值金待付款": 0, "儲值金已付款": 0, "儲值金待付款＋已付款": 0,
     }
     total_row = out[out["地區"] == "加總"].iloc[0]
     assert total_row.to_dict() == {
         "地區": "加總", "未付款": 1500, "已付款": 2000, "未付款＋已付款": 3500,
+        "儲值金待付款": 0, "儲值金已付款": 0, "儲值金待付款＋已付款": 0,
     }
-    assert "儲值金" not in out["地區"].tolist()
+    # 每個地區都要有自己的一列，不能像舊版那樣另外多一列「儲值金」。
+    assert out["地區"].tolist() == [*report.CITY_ORDER, "加總"]
 
 
-def test_order_date_summary_splits_out_stored_value_topups():
+def test_order_date_summary_splits_out_stored_value_by_city():
     raw_df = pd.DataFrame([
-        # 一般清潔訂單，即使是用儲值金付款，服務分類仍然是「清潔」，要留在地區/加總。
+        # 一般清潔訂單，即使是用儲值金付款，服務分類仍然是「清潔」，要留在未付款/已付款。
         {"城市": "台北", "收入類型": "現金收入", "服務": "居家清潔", "已付款": 2800, "待付款": 0},
         {"城市": "台中", "收入類型": "現金收入", "服務": "居家清潔", "已付款": 0, "待付款": 500},
         # 儲值金儲值單：raw_df 裡的「服務」欄位已經是 parse_html() 正規化過的值
         # （原始表頭「VIP」會被 normalize_service 轉成「儲值金」），收入類型是「現金收入」
-        # ——跟「目前總表」判斷儲值金的邏輯完全相同。
+        # ——跟「目前總表」判斷儲值金的邏輯完全相同。同一個地區（台北）同時有清潔訂單
+        # 跟儲值金訂單，確認兩者不會互相汙染。
         {"城市": "台北", "收入類型": "現金收入", "服務": "儲值金", "已付款": 0, "待付款": 50000},
         {"城市": "桃園", "收入類型": "現金收入", "服務": "儲值金", "已付款": 30000, "待付款": 0},
     ])
     out = report.build_order_date_summary(raw_df)
 
-    assert out.iloc[0].to_dict() == {
+    taipei_row = out[out["地區"] == "台北"].iloc[0]
+    assert taipei_row.to_dict() == {
         "地區": "台北", "未付款": 0, "已付款": 2800, "未付款＋已付款": 2800,
+        "儲值金待付款": 50000, "儲值金已付款": 0, "儲值金待付款＋已付款": 50000,
+    }
+
+    taoyuan_row = out[out["地區"] == "桃園"].iloc[0]
+    assert taoyuan_row.to_dict() == {
+        "地區": "桃園", "未付款": 0, "已付款": 0, "未付款＋已付款": 0,
+        "儲值金待付款": 0, "儲值金已付款": 30000, "儲值金待付款＋已付款": 30000,
     }
 
     total_row = out[out["地區"] == "加總"].iloc[0]
     assert total_row.to_dict() == {
         "地區": "加總", "未付款": 500, "已付款": 2800, "未付款＋已付款": 3300,
-    }
-
-    stored_value_row = out.iloc[-1]
-    assert stored_value_row.to_dict() == {
-        "地區": "儲值金", "未付款": 50000, "已付款": 30000, "未付款＋已付款": 80000,
+        "儲值金待付款": 50000, "儲值金已付款": 30000, "儲值金待付款＋已付款": 80000,
     }
 
 
