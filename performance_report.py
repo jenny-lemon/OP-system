@@ -249,9 +249,9 @@ def build_order_date_summary(raw_df: pd.DataFrame, order_rows=None) -> pd.DataFr
     是「待付款/已付款/儲值金待付款/儲值金已付款」這幾個總額欄位唯一的資料來源。
 
     財務彙總表本身沒有服務日期（依服務分類彙總，不是逐筆訂單），服務日期要另外從
-    同一頁裡的「訂單列表」表格（訂購資訊/服務日期/付款資訊）取得，所以月份拆分改吃
-    order_rows：list of {"城市","日期","已付款","待付款","是否儲值金"}（見
-    _parse_order_list_rows()）。月份欄位只影響「待付款/已付款」底下的動態拆分，不影響
+    同一頁內嵌的 purchaseList JSON（逐筆訂單）取得，所以月份拆分改吃 order_rows：
+    list of {"城市","日期","已付款","待付款","是否儲值金"}（見 generate_order_date_report()
+    如何用 _fetch_purchase_items() 組出這份清單）。月份欄位只影響「待付款/已付款」底下的動態拆分，不影響
     地區/加總/儲值金這幾個主要欄位的數字（那些永遠以 raw_df 為準）；order_rows 缺漏或
     抓不到服務日期時，就不會有月份欄位，不會出錯，也不會動到主要欄位的數字。
 
@@ -313,67 +313,9 @@ def build_order_date_summary(raw_df: pd.DataFrame, order_rows=None) -> pd.DataFr
     return out[cols]
 
 
-def _parse_order_list_rows(html):
-    """解析「訂購資訊/服務日期/付款資訊」訂單列表表格，逐筆訂單取出服務日期、金額與
-    付款狀態，供 build_order_date_summary() 依服務日期拆月份用。
-
-    這張表跟 parse_html() 解析的財務彙總表是同一個報表頁面裡的另一張表——彙總表是
-    依服務分類彙總、沒有服務日期；這張表才有逐筆訂單的服務日期，但金額／付款狀態是
-    「付款資訊」欄位裡的一段文字（例如「總金額：4200 ... 付款狀態：已付款」），不是
-    獨立欄位，所以用正規表示式取值，比對得到才算數，比對不到就跳過那一筆（只影響
-    月份拆分細節，不影響 build_order_date_summary() 的地區/加總/儲值金主要欄位）。
-    """
-    soup = BeautifulSoup(html, "html.parser")
-    tables = soup.find_all("table")
-    results = []
-
-    amount_re = re.compile(r"總金額\s*[:：]\s*([\d,]+)")
-    status_re = re.compile(r"付款狀態\s*[:：]\s*([^\s]+)")
-
-    for table in tables:
-        trs = table.find_all("tr")
-        rows = []
-        for tr in trs:
-            cells = tr.find_all(["th", "td"])
-            row = [c.get_text(" ", strip=True) for c in cells]
-            if any(str(x).strip() for x in row):
-                rows.append(row)
-        if not rows:
-            continue
-
-        header = [str(x).strip() for x in rows[0]]
-        if "服務日期" not in header or "付款資訊" not in header:
-            continue
-
-        date_idx = header.index("服務日期")
-        pay_idx = header.index("付款資訊")
-        order_idx = header.index("訂購資訊") if "訂購資訊" in header else None
-
-        for row in rows[1:]:
-            if len(row) <= date_idx or len(row) <= pay_idx:
-                continue
-            order_text = row[order_idx] if order_idx is not None and len(row) > order_idx else ""
-            pay_text = row[pay_idx]
-
-            status_m = status_re.search(pay_text)
-            status_text = status_m.group(1) if status_m else ""
-            if "退款" in status_text or "取消" in status_text:
-                continue
-
-            amount_m = amount_re.search(pay_text)
-            if not amount_m:
-                continue
-            amount = safe_int(amount_m.group(1))
-            is_paid = "已付款" in status_text
-
-            results.append({
-                "日期": normalize_date_text(row[date_idx]),
-                "已付款": amount if is_paid else 0,
-                "待付款": 0 if is_paid else amount,
-                "是否儲值金": "儲值金-" in order_text,
-            })
-
-    return results
+def _purchase_is_stored_value_topup(item) -> bool:
+    searchable = json.dumps(item, ensure_ascii=False, default=str)
+    return "儲值金-" in searchable
 
 
 def build_month_performance_summary(raw_df: pd.DataFrame, month_ranges) -> pd.DataFrame:
@@ -501,17 +443,30 @@ def generate_order_date_report(order_start_date: str, order_end_date: str, trigg
                         }
                     merged[key]["已付款"] += row["已付款"]
                     merged[key]["待付款"] += row["待付款"]
-                # 財務彙總表（p_board=on）沒有服務日期，服務日期只在不帶 p_board 的
-                # 訂單列表頁面才有，兩種頁面互斥，所以另外發一次請求取得。
-                board_off_response = session.get(
-                    build_url(order_start_date, order_end_date, status, keyword,
-                              use_order_date=True, include_board=False),
-                    headers=HEADERS, allow_redirects=True,
+                # 財務彙總表沒有服務日期，逐筆訂單的服務日期改用 _fetch_purchase_items()
+                # 讀取同一頁內嵌的 purchaseList JSON——這個既有函式已經處理好分頁（每頁
+                # 20 筆，讀到不滿一頁才停），不會像單頁 HTML 表格解析一樣漏掉後面分頁
+                # 的訂單，才不會讓月份拆分的總和對不上待付款/已付款的地區總額。
+                items = _fetch_purchase_items(
+                    session, date_s=order_start_date, date_e=order_end_date,
+                    purchase_status=str(status), keyword=keyword,
                 )
-                board_off_response.raise_for_status()
-                for item in _parse_order_list_rows(board_off_response.text):
-                    item["城市"] = city
-                    order_rows.append(item)
+                for item in items:
+                    if _purchase_is_cancelled(item):
+                        continue
+                    amount = _purchase_amount(item)
+                    if amount <= 0:
+                        continue
+                    date_text = str(item.get("date_clean") or item.get("service_date") or "")[:10]
+                    if not date_text:
+                        continue
+                    order_rows.append({
+                        "城市": city,
+                        "日期": date_text,
+                        "已付款": amount if status == 1 else 0,
+                        "待付款": 0 if status == 1 else amount,
+                        "是否儲值金": _purchase_is_stored_value_topup(item),
+                    })
         return list(merged.values()), order_rows
 
     city_results, errors = _parallel_city_results(worker)
@@ -601,17 +556,12 @@ def generate_month_range_reports(report_start_month: str, report_end_month: str,
     }
 
 
-def build_url(start, end, status, keyword="", use_order_date=False, include_board=True):
+def build_url(start, end, status, keyword="", use_order_date=False):
     """組出報表頁查詢網址。
 
     預設用「清潔／服務日期」（clean_date_s/clean_date_e）篩選，這是「月份業績統整」
     在用的欄位。use_order_date=True 時改填「訂購日期」（date_s/date_e），這是
     「訂購日期付款彙總」在用的欄位——兩者是同一個報表頁面，欄位不同而已。
-
-    include_board 控制是否帶入 p_board=on：後端用這個參數切換兩種互斥的頁面內容
-    ——勾選（on）時回傳「財務彙總表」（已付款金額/待付款金額，依服務分類彙總，
-    parse_html() 在解析這個）；不勾選時回傳「訂單列表」（訂購資訊/服務日期/付款
-    資訊，逐筆訂單，_parse_order_list_rows() 在解析這個，只有這裡才有服務日期）。
     """
     params = {
         "keyword": keyword,
@@ -630,6 +580,7 @@ def build_url(start, end, status, keyword="", use_order_date=False, include_boar
         "area_id": "",
         "isCharge": "",
         "isRefund": "",
+        "p_board": "on",
         "payway": "",
         "purchase_status": str(status),
         "progress_status": "",
@@ -637,8 +588,6 @@ def build_url(start, end, status, keyword="", use_order_date=False, include_boar
         "otherFee": "",
         "orderBy": "",
     }
-    if include_board:
-        params["p_board"] = "on"
     return requests.Request("GET", PURCHASE_URL, params=params).prepare().url
 
 
