@@ -224,13 +224,19 @@ def _purchase_is_reserve(item) -> bool:
 
 
 def _purchase_is_stored_value_topup(item) -> bool:
-    """訂單本身是「儲值金」儲值單（購買項目開頭是「儲值金」），例如「儲值金-台北(儲值金50,000贈購物金2,500)」。
+    """訂單本身是「儲值金」儲值單，例如購買項目顯示「儲值金-台北(儲值金50,000贈購物金2,500)」。
 
-    這跟用儲值金付款的清潔訂單（付款方式＝儲值金）是兩回事，只看購買項目欄位，
-    不能用整筆訂單去搜尋「儲值金」字串，否則會把用儲值金付款的清潔訂單也算進來。
+    後台把儲值單的購買項目顯示成「儲值金-地區(...)」這種帶連字號的固定格式，所以用
+    「儲值金-」這個樣式去比對整筆訂單內容，藉此和「付款方式：儲值金」（用儲值金付款的
+    一般清潔訂單，欄位值只是單純「儲值金」三個字，沒有後面的連字號與地區/金額說明）
+    區分開來，做法跟 _purchase_is_reserve() 判斷保留單一樣，用整筆訂單內容比對而不是
+    依賴特定欄位名稱。
     """
     buy_item = str(item.get("buy") or item.get("buy_item") or item.get("product") or "").strip()
-    return buy_item.startswith("儲值金") or buy_item.startswith("VIP")
+    if buy_item.startswith("儲值金") or buy_item.startswith("VIP"):
+        return True
+    searchable = json.dumps(item, ensure_ascii=False, default=str)
+    return "儲值金-" in searchable
 
 
 def _purchase_person_hours(item) -> float:
