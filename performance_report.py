@@ -240,28 +240,40 @@ def _purchase_person_hours(item) -> float:
 
 
 def build_order_date_summary(raw_df: pd.DataFrame) -> pd.DataFrame:
-    """依地區統計未付款／已付款／合計，並把「儲值金」拆成同一列裡的獨立欄位。
+    """依地區統計待付款／已付款／合計，待付款/已付款底下再依「服務日期」動態拆出月份欄位，
+    並把「儲值金」拆成同一列裡的獨立欄位（只分待付款/已付款，不拆月份）。
 
     raw_df 跟 build_month_performance_summary() 吃的是同一種資料形狀（城市/收入類型/
-    服務/已付款/待付款，來自同一個報表頁面的 parse_html() 結果，只差在查詢時用「訂購
-    日期」而不是「清潔／服務日期」），用同一套 to_category()／detect_income_type()
-    分類，才會跟「目前總表」的儲值金判斷邏輯一致。
+    服務/已付款/待付款/日期，來自同一個報表頁面的 parse_html() 結果，只差在查詢時用
+    「訂購日期」而不是「清潔／服務日期」），用同一套 to_category()／detect_income_type()
+    分類，才會跟「目前總表」的儲值金判斷邏輯一致；「日期」欄位是 parse_html() 從報表
+    的「服務日期」欄位取得的（見 date_candidates），所以可以直接拿來分月份。
 
-    儲值金儲值單是預收款，不是清潔服務業績，所以不計入「未付款/已付款」，改成同一個
+    月份欄位是動態的：查詢結果裡的訂單，服務日期落在幾個不同月份，就出現幾組
+    「{月份}待付款/{月份}已付款」欄位，按時間排序。
+
+    儲值金儲值單是預收款，不是清潔服務業績，所以不計入「待付款/已付款」，改成同一個
     地區列裡的「儲值金待付款/儲值金已付款」欄位（跟「目前總表」把儲值金當成每個地區
     的一個欄位、而不是另外一列，是同一種呈現方式）。
     """
-    cols = ["地區", "未付款", "已付款", "未付款＋已付款", "儲值金待付款", "儲值金已付款", "儲值金待付款＋已付款"]
+    base_cols = ["地區", "待付款", "已付款", "待付款＋已付款"]
+    stored_value_cols = ["儲值金待付款", "儲值金已付款", "儲值金待付款＋已付款"]
     if raw_df.empty:
-        return pd.DataFrame(columns=cols)
+        return pd.DataFrame(columns=base_cols + stored_value_cols)
 
     work = raw_df.copy()
     work["類別"] = work.apply(lambda r: to_category(r["服務"], r["收入類型"]), axis=1)
 
-    # 儲值金以外的所有項目（清潔、家電、水洗、收納…）都算進「未付款/已付款」，
+    # 儲值金以外的所有項目（清潔、家電、水洗、收納…）都算進「待付款/已付款」，
     # 未分類的服務名稱也保留，避免因為新服務名稱沒被 to_category() 認得而遺漏金額。
-    service_df = work[work["類別"] != "儲值金"]
+    service_df = work[work["類別"] != "儲值金"].copy()
     stored_value_df = work[(work["收入類型"] == "現金收入") & (work["類別"] == "儲值金")]
+
+    service_df["服務月份"] = pd.to_datetime(service_df["日期"], errors="coerce").dt.strftime("%Y/%m")
+    months = sorted(service_df["服務月份"].dropna().unique().tolist())
+    month_cols = [f"{m}{kind}" for m in months for kind in ("待付款", "已付款")]
+
+    cols = base_cols + month_cols + stored_value_cols
 
     rows = []
     for city in CITY_ORDER:
@@ -269,17 +281,23 @@ def build_order_date_summary(raw_df: pd.DataFrame) -> pd.DataFrame:
         sv_sub = stored_value_df[stored_value_df["城市"] == city]
         unpaid = svc_sub["待付款"].sum()
         paid = svc_sub["已付款"].sum()
+        row = {
+            "地區": city,
+            "待付款": unpaid,
+            "已付款": paid,
+            "待付款＋已付款": unpaid + paid,
+        }
+        for m in months:
+            m_sub = svc_sub[svc_sub["服務月份"] == m]
+            row[f"{m}待付款"] = m_sub["待付款"].sum()
+            row[f"{m}已付款"] = m_sub["已付款"].sum()
         sv_unpaid = sv_sub["待付款"].sum()
         sv_paid = sv_sub["已付款"].sum()
-        rows.append({
-            "地區": city,
-            "未付款": unpaid,
-            "已付款": paid,
-            "未付款＋已付款": unpaid + paid,
-            "儲值金待付款": sv_unpaid,
-            "儲值金已付款": sv_paid,
-            "儲值金待付款＋已付款": sv_unpaid + sv_paid,
-        })
+        row["儲值金待付款"] = sv_unpaid
+        row["儲值金已付款"] = sv_paid
+        row["儲值金待付款＋已付款"] = sv_unpaid + sv_paid
+        rows.append(row)
+
     out = pd.DataFrame(rows, columns=cols)
     out = pd.concat([out, pd.DataFrame([{
         "地區": "加總",
