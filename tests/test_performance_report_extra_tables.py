@@ -39,8 +39,9 @@ def test_order_date_summary_groups_by_city_and_totals():
 
 
 def test_order_date_summary_splits_service_date_into_dynamic_month_columns():
-    # 財務彙總表（raw_df）只給總額；服務日期來自另一張訂單列表表格（order_rows，見
-    # _parse_order_list_rows()），台北訂單的服務日期橫跨 8 月跟 9 月，待付款/已付款
+    # 財務彙總表（raw_df）只給總額；服務日期來自逐筆訂單資料（order_rows，見
+    # generate_order_date_report() 如何用 _fetch_purchase_items() 組出這份清單），
+    # 台北訂單的服務日期橫跨 8 月跟 9 月，待付款/已付款
     # 底下應該動態拆成兩組月份欄位，按時間排序，但地區/加總的總額仍然以 raw_df 為準。
     raw_df = pd.DataFrame([
         {"城市": "台北", "收入類型": "現金收入", "服務": "居家清潔", "已付款": 3000, "待付款": 1500},
@@ -101,43 +102,14 @@ def test_order_date_summary_splits_out_stored_value_by_city():
     assert total_row["儲值金待付款＋已付款"] == 80000
 
 
-def test_parse_order_list_rows_reads_real_table_layout():
-    # 完全比照使用者實際看到的表格結構：訂購資訊/服務日期/付款資訊 三欄，
-    # 服務日期帶星期幾，付款資訊是一段自由格式文字。
-    html = """
-    <table>
-      <tr><th>訂購資訊</th><th>服務日期</th><th>付款資訊</th></tr>
-      <tr>
-        <td>代客預訂：瑋萱 馬錦雯 搬入清潔</td>
-        <td>2026-08-23 (日) 09:00 - 16:00 陳尹洙(5)</td>
-        <td>總金額：4200 週末加價：1800 付款方式：信用卡 付款狀態：已付款 付款日期：2026-08-19</td>
-      </tr>
-      <tr>
-        <td>儲值金-台北(儲值金50,000贈購物金2,500)</td>
-        <td></td>
-        <td>總金額：50000 付款方式：信用卡 付款狀態：待付款</td>
-      </tr>
-      <tr>
-        <td>代客預訂：Jenny 檸檬保留 居家清潔</td>
-        <td>2026-09-15 (二) 14:00 - 17:00</td>
-        <td>總金額：0 付款方式：儲值金 付款狀態：已退款 付款日期：2026-08-18</td>
-      </tr>
-    </table>
-    """
-    rows = report._parse_order_list_rows(html)
-    # 已退款那筆要整筆排除，不進 rows。
-    assert len(rows) == 2
-
-    cleaning = rows[0]
-    assert cleaning["日期"] == "2026-08-23"
-    assert cleaning["已付款"] == 4200
-    assert cleaning["待付款"] == 0
-    assert cleaning["是否儲值金"] is False
-
-    stored_value = rows[1]
-    assert stored_value["已付款"] == 0
-    assert stored_value["待付款"] == 50000
-    assert stored_value["是否儲值金"] is True
+def test_purchase_is_stored_value_topup_detects_order_title():
+    # 儲值金儲值單的「訂購資訊」欄位文字（例如「儲值金-台北(儲值金50,000贈購物金
+    # 2,500)」）在 purchaseList JSON 的某個欄位裡也會出現同樣的文字，整筆記錄用
+    # json 字串搜尋比對，跟 _purchase_is_reserve() 判斷保留單的作法一致。
+    topup_item = {"order_no": "LC1", "name": "儲值金-台北(儲值金50,000贈購物金2,500)"}
+    cleaning_item = {"order_no": "LC2", "name": "代客預訂：Jenny 居家清潔"}
+    assert report._purchase_is_stored_value_topup(topup_item) is True
+    assert report._purchase_is_stored_value_topup(cleaning_item) is False
 
 
 def test_month_performance_minus_reserve_equals_net():
