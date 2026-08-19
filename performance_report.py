@@ -240,53 +240,51 @@ def _purchase_person_hours(item) -> float:
 
 
 def build_order_date_summary(raw_df: pd.DataFrame) -> pd.DataFrame:
-    """依地區統計未付款／已付款／合計，並把「儲值金」儲值單獨立成最後一列。
+    """依地區統計未付款／已付款／合計，並把「儲值金」拆成同一列裡的獨立欄位。
 
     raw_df 跟 build_month_performance_summary() 吃的是同一種資料形狀（城市/收入類型/
     服務/已付款/待付款，來自同一個報表頁面的 parse_html() 結果，只差在查詢時用「訂購
     日期」而不是「清潔／服務日期」），用同一套 to_category()／detect_income_type()
     分類，才會跟「目前總表」的儲值金判斷邏輯一致。
 
-    儲值金儲值單是預收款，不是清潔服務業績，所以不計入各地區與「加總」，改成獨立的
-    「儲值金」列（未付款＝儲值金待付款，已付款＝儲值金已付款）。
+    儲值金儲值單是預收款，不是清潔服務業績，所以不計入「未付款/已付款」，改成同一個
+    地區列裡的「儲值金待付款/儲值金已付款」欄位（跟「目前總表」把儲值金當成每個地區
+    的一個欄位、而不是另外一列，是同一種呈現方式）。
     """
-    cols = ["地區", "未付款", "已付款", "未付款＋已付款"]
+    cols = ["地區", "未付款", "已付款", "未付款＋已付款", "儲值金待付款", "儲值金已付款", "儲值金待付款＋已付款"]
     if raw_df.empty:
         return pd.DataFrame(columns=cols)
 
     work = raw_df.copy()
     work["類別"] = work.apply(lambda r: to_category(r["服務"], r["收入類型"]), axis=1)
 
-    # 儲值金以外的所有項目（清潔、家電、水洗、收納…）都算進地區與加總，
+    # 儲值金以外的所有項目（清潔、家電、水洗、收納…）都算進「未付款/已付款」，
     # 未分類的服務名稱也保留，避免因為新服務名稱沒被 to_category() 認得而遺漏金額。
     service_df = work[work["類別"] != "儲值金"]
+    stored_value_df = work[(work["收入類型"] == "現金收入") & (work["類別"] == "儲值金")]
+
     rows = []
     for city in CITY_ORDER:
-        sub = service_df[service_df["城市"] == city]
+        svc_sub = service_df[service_df["城市"] == city]
+        sv_sub = stored_value_df[stored_value_df["城市"] == city]
+        unpaid = svc_sub["待付款"].sum()
+        paid = svc_sub["已付款"].sum()
+        sv_unpaid = sv_sub["待付款"].sum()
+        sv_paid = sv_sub["已付款"].sum()
         rows.append({
             "地區": city,
-            "未付款": sub["待付款"].sum(),
-            "已付款": sub["已付款"].sum(),
-        })
-    out = pd.DataFrame(rows, columns=["地區", "未付款", "已付款"])
-    out["未付款＋已付款"] = out["未付款"] + out["已付款"]
-    out = pd.concat([out, pd.DataFrame([{
-        "地區": "加總",
-        "未付款": out["未付款"].sum(),
-        "已付款": out["已付款"].sum(),
-        "未付款＋已付款": out["未付款＋已付款"].sum(),
-    }])], ignore_index=True)
-
-    stored_value_df = work[(work["收入類型"] == "現金收入") & (work["類別"] == "儲值金")]
-    if not stored_value_df.empty:
-        unpaid = stored_value_df["待付款"].sum()
-        paid = stored_value_df["已付款"].sum()
-        out = pd.concat([out, pd.DataFrame([{
-            "地區": "儲值金",
             "未付款": unpaid,
             "已付款": paid,
             "未付款＋已付款": unpaid + paid,
-        }])], ignore_index=True)
+            "儲值金待付款": sv_unpaid,
+            "儲值金已付款": sv_paid,
+            "儲值金待付款＋已付款": sv_unpaid + sv_paid,
+        })
+    out = pd.DataFrame(rows, columns=cols)
+    out = pd.concat([out, pd.DataFrame([{
+        "地區": "加總",
+        **{c: out[c].sum() for c in cols[1:]},
+    }])], ignore_index=True)
     return out[cols]
 
 
