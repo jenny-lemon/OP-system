@@ -333,6 +333,93 @@ h3 { color: #0f172a !important; font-size: 22px !important; font-weight: 700 !im
     div[data-testid="stMetric"] [data-testid="stMetricValue"] { font-size: 22px !important; }
 }
 
+/* ─── Report page tabs (real Streamlit st.tabs DOM — verified against the
+   installed Streamlit build, not guessed from older-version docs) ─── */
+div[data-testid="stTabs"] [role="tablist"] {
+    gap: 4px;
+    border-bottom: 1px solid #e8ecf0;
+    margin-bottom: 4px;
+}
+div[data-testid="stTabs"] [data-testid="stTab"] {
+    padding: 12px 18px !important;
+    border-radius: 9px 9px 0 0 !important;
+    font-family: 'DM Sans','PingFang TC','Noto Sans TC',sans-serif !important;
+    font-weight: 600 !important;
+    font-size: 14.5px !important;
+    color: #64748b !important;
+    background: transparent !important;
+    transition: background .15s ease, color .15s ease;
+}
+div[data-testid="stTabs"] [data-testid="stTab"] p {
+    font-weight: inherit !important;
+    font-size: inherit !important;
+}
+div[data-testid="stTabs"] [data-testid="stTab"]:hover {
+    color: #1e293b !important;
+    background: #f4f6f9 !important;
+}
+div[data-testid="stTabs"] [data-testid="stTab"][aria-selected="true"] {
+    color: #2563eb !important;
+    background: #eff6ff !important;
+}
+div[data-testid="stTabs"] [data-testid="stTab"] .react-aria-SelectionIndicator {
+    background: #2563eb !important;
+    height: 3px !important;
+    border-radius: 3px 3px 0 0 !important;
+}
+div[data-testid="stTabs"] [role="tabpanel"] { padding-top: 20px; }
+
+/* Nested tabs (月度追蹤 sub-tabs) read a touch smaller/quieter so the page
+   keeps a clear top-tab → sub-tab hierarchy instead of two identical rows. */
+div[class*="st-key-nested_tabs"] div[data-testid="stTabs"] [data-testid="stTab"] {
+    padding: 8px 14px !important;
+    font-size: 13px !important;
+    border-radius: 7px 7px 0 0 !important;
+}
+div[class*="st-key-nested_tabs"] div[data-testid="stTabs"] [data-testid="stTab"] .react-aria-SelectionIndicator {
+    height: 2px !important;
+}
+div[class*="st-key-nested_tabs"] div[data-testid="stTabs"] [role="tablist"] {
+    margin-bottom: 2px;
+}
+
+/* ─── Report cards rendered as real st.container(border=True, key="perfcard_*")
+   blocks (so widgets placed inside actually sit inside the card, unlike a
+   hand-written <div> that closes before the widget renders) ─── */
+div[class*="st-key-perfcard_"] {
+    background: #fff !important;
+    border: 1px solid #e8ecf0 !important;
+    border-radius: 12px !important;
+    padding: 20px 22px 18px !important;
+    margin-bottom: 16px !important;
+    box-shadow: 0 1px 3px rgba(15,23,42,.04), 0 3px 10px rgba(15,23,42,.04) !important;
+}
+
+/* ─── Alerts (st.info / st.warning / st.success empty-state messages) ─── */
+div[data-testid="stAlertContainer"] {
+    border-radius: 0 10px 10px 0 !important;
+    padding: 13px 16px !important;
+    font-size: 13px !important;
+    font-weight: 500 !important;
+    box-shadow: 0 1px 3px rgba(15,23,42,.04) !important;
+    border-left-width: 3px !important;
+    border-left-style: solid !important;
+}
+div[data-testid="stAlertContainer"] p { font-weight: 500 !important; margin: 0 !important; }
+
+/* ─── Date pickers / multiselects used by the 訂購日期 & 月份區間 tabs ─── */
+div[data-testid="stDateInput"] input {
+    background: #fff !important; border: 1px solid #d1d9e0 !important;
+    border-radius: 8px !important; color: #1e293b !important; font-size: 13.5px !important;
+}
+div[data-testid="stDateInput"] label,
+div[data-testid="stMultiSelect"] label {
+    color: #374151 !important; font-size: 13px !important; font-weight: 600 !important;
+}
+div[data-testid="stMultiSelect"] > div > div {
+    background: #fff !important; border: 1px solid #d1d9e0 !important; border-radius: 8px !important;
+}
+
 </style>
 """, unsafe_allow_html=True)
 
@@ -798,18 +885,19 @@ def render_monthly_tracking_tabs():
         unsafe_allow_html=True,
     )
 
-    tab_current, tab_next, tab_snapshot = st.tabs(["當月每日業績", "次月每日業績", "月底快照"])
+    with st.container(key="nested_tabs_monthly"):
+        tab_current, tab_next, tab_snapshot = st.tabs(["當月每日業績", "次月每日業績", "月底快照"])
 
-    with tab_current:
-        st.caption("資料來源：上方各區月度摘要（df4.csv）的本月加總；每次『更新資料』會新增一筆，舊紀錄會保留，除非手動勾選刪除。")
-        _show_period_section("當月每日業績總覽", "daily_df.csv", "本月")
+        with tab_current:
+            st.caption("資料來源：上方各區月度摘要（df4.csv）的本月加總；每次『更新資料』會新增一筆，舊紀錄會保留，除非手動勾選刪除。")
+            _show_period_section("當月每日業績總覽", "daily_df.csv", "本月")
 
-    with tab_next:
-        st.caption("資料來源：上方各區月度摘要（df4.csv）的次月加總；每次『更新資料』會新增一筆，舊紀錄會保留，除非手動勾選刪除。")
-        _show_period_section("次月每日業績總覽", "next_month_daily_df.csv", "次月")
+        with tab_next:
+            st.caption("資料來源：上方各區月度摘要（df4.csv）的次月加總；每次『更新資料』會新增一筆，舊紀錄會保留，除非手動勾選刪除。")
+            _show_period_section("次月每日業績總覽", "next_month_daily_df.csv", "次月")
 
-    with tab_snapshot:
-        _show_month_end_snapshot_tab()
+        with tab_snapshot:
+            _show_month_end_snapshot_tab()
 
 
 def _load_report_meta() -> dict:
@@ -930,18 +1018,18 @@ def render_month_performance_report_tab():
         _run_filtered_performance_report("month")
     st.caption("起迄月份均包含在統計範圍內，最多可選 24 個月。")
 
-    st.markdown('<div class="section-card"><div class="section-title">➖ 該月業績－該月保留單業績</div>', unsafe_allow_html=True)
-    _show_summary_csv("net_performance_summary.csv", "尚未產生扣除後業績，請先套用月份區間。")
-    st.markdown("</div>", unsafe_allow_html=True)
+    with st.container(border=True, key="perfcard_net"):
+        st.markdown('<div class="section-title">➖ 該月業績－該月保留單業績</div>', unsafe_allow_html=True)
+        _show_summary_csv("net_performance_summary.csv", "尚未產生扣除後業績，請先套用月份區間。")
 
-    st.markdown('<div class="section-card"><div class="section-title">📊 該月業績報表</div>', unsafe_allow_html=True)
-    _show_summary_csv("month_performance_summary.csv", "尚未產生該月業績，請先套用月份區間。")
-    st.markdown("</div>", unsafe_allow_html=True)
+    with st.container(border=True, key="perfcard_month"):
+        st.markdown('<div class="section-title">📊 該月業績報表</div>', unsafe_allow_html=True)
+        _show_summary_csv("month_performance_summary.csv", "尚未產生該月業績，請先套用月份區間。")
 
-    st.markdown('<div class="section-card"><div class="section-title">🕒 該月保留單業績</div>', unsafe_allow_html=True)
-    st.caption("保留單時數以『人數 × 每人服務時數』計算。")
-    _show_summary_csv("reserve_summary.csv", "尚未產生保留單業績，請先套用月份區間。")
-    st.markdown("</div>", unsafe_allow_html=True)
+    with st.container(border=True, key="perfcard_reserve"):
+        st.markdown('<div class="section-title">🕒 該月保留單業績</div>', unsafe_allow_html=True)
+        st.caption("保留單時數以『人數 × 每人服務時數』計算。")
+        _show_summary_csv("reserve_summary.csv", "尚未產生保留單業績，請先套用月份區間。")
 
 
 def render_performance_report_page():
