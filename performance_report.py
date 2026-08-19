@@ -223,6 +223,16 @@ def _purchase_is_reserve(item) -> bool:
     return "系統保留單" in searchable or "大掃除檸檬保留單" in searchable or "保留" in name or "檸檬" in name
 
 
+def _purchase_is_stored_value_topup(item) -> bool:
+    """訂單本身是「儲值金」儲值單（購買項目開頭是「儲值金」），例如「儲值金-台北(儲值金50,000贈購物金2,500)」。
+
+    這跟用儲值金付款的清潔訂單（付款方式＝儲值金）是兩回事，只看購買項目欄位，
+    不能用整筆訂單去搜尋「儲值金」字串，否則會把用儲值金付款的清潔訂單也算進來。
+    """
+    buy_item = str(item.get("buy") or item.get("buy_item") or item.get("product") or "").strip()
+    return buy_item.startswith("儲值金") or buy_item.startswith("VIP")
+
+
 def _purchase_person_hours(item) -> float:
     """保留時數以人數 × 每人服務時數計算。"""
     try:
@@ -244,8 +254,16 @@ def _purchase_person_hours(item) -> float:
 
 
 def build_order_date_summary(records) -> pd.DataFrame:
+    """依地區統計未付款／已付款／合計，並把「儲值金」儲值單獨立成最後一列。
+
+    儲值金儲值單是預收款，不是清潔服務業績，所以不計入各地區與「加總」，
+    改成獨立的「儲值金」列（未付款＝儲值金待付款，已付款＝儲值金已付款）。
+    """
     cols = ["地區", "未付款", "已付款", "未付款＋已付款"]
     rows = []
+    stored_value_unpaid = 0
+    stored_value_paid = 0
+    stored_value_seen = False
     for item in records:
         if _purchase_is_cancelled(item):
             continue
@@ -253,15 +271,32 @@ def build_order_date_summary(records) -> pd.DataFrame:
         if not city:
             continue
         amount = _purchase_amount(item)
+        if _purchase_is_stored_value_topup(item):
+            stored_value_seen = True
+            if _purchase_is_paid(item):
+                stored_value_paid += amount
+            else:
+                stored_value_unpaid += amount
+            continue
         rows.append({"地區": city, "未付款": 0 if _purchase_is_paid(item) else amount, "已付款": amount if _purchase_is_paid(item) else 0})
-    if not rows:
+    if not rows and not stored_value_seen:
         return pd.DataFrame(columns=cols)
-    out = pd.DataFrame(rows).groupby("地區", as_index=False)[["未付款", "已付款"]].sum()
+    if rows:
+        out = pd.DataFrame(rows).groupby("地區", as_index=False)[["未付款", "已付款"]].sum()
+    else:
+        out = pd.DataFrame(columns=["地區", "未付款", "已付款"])
     out["未付款＋已付款"] = out["未付款"] + out["已付款"]
     out["地區"] = pd.Categorical(out["地區"], CITY_ORDER, ordered=True)
     out = out.sort_values("地區").reset_index(drop=True)
     out["地區"] = out["地區"].astype(str)
     out = pd.concat([out, pd.DataFrame([{"地區": "加總", "未付款": out["未付款"].sum(), "已付款": out["已付款"].sum(), "未付款＋已付款": out["未付款＋已付款"].sum()}])], ignore_index=True)
+    if stored_value_seen:
+        out = pd.concat([out, pd.DataFrame([{
+            "地區": "儲值金",
+            "未付款": stored_value_unpaid,
+            "已付款": stored_value_paid,
+            "未付款＋已付款": stored_value_unpaid + stored_value_paid,
+        }])], ignore_index=True)
     return out[cols]
 
 
