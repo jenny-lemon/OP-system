@@ -213,30 +213,10 @@ def _purchase_is_cancelled(item) -> bool:
     return bool(item.get("cancel_at") or item.get("cancel_log") or str(item.get("purchase_status")) in {"cancel", "cancelled"})
 
 
-def _purchase_is_paid(item) -> bool:
-    return bool(item.get("paid_at") or str(item.get("purchase_status") or "").strip() == "1")
-
-
 def _purchase_is_reserve(item) -> bool:
     searchable = json.dumps(item, ensure_ascii=False, default=str)
     name = str(item.get("name") or item.get("customer_name") or "")
     return "系統保留單" in searchable or "大掃除檸檬保留單" in searchable or "保留" in name or "檸檬" in name
-
-
-def _purchase_is_stored_value_topup(item) -> bool:
-    """訂單本身是「儲值金」儲值單，例如購買項目顯示「儲值金-台北(儲值金50,000贈購物金2,500)」。
-
-    後台把儲值單的購買項目顯示成「儲值金-地區(...)」這種帶連字號的固定格式，所以用
-    「儲值金-」這個樣式去比對整筆訂單內容，藉此和「付款方式：儲值金」（用儲值金付款的
-    一般清潔訂單，欄位值只是單純「儲值金」三個字，沒有後面的連字號與地區/金額說明）
-    區分開來，做法跟 _purchase_is_reserve() 判斷保留單一樣，用整筆訂單內容比對而不是
-    依賴特定欄位名稱。
-    """
-    buy_item = str(item.get("buy") or item.get("buy_item") or item.get("product") or "").strip()
-    if buy_item.startswith("儲值金") or buy_item.startswith("VIP"):
-        return True
-    searchable = json.dumps(item, ensure_ascii=False, default=str)
-    return "儲值金-" in searchable
 
 
 def _purchase_person_hours(item) -> float:
@@ -259,49 +239,53 @@ def _purchase_person_hours(item) -> float:
     return people * hours
 
 
-def build_order_date_summary(records) -> pd.DataFrame:
+def build_order_date_summary(raw_df: pd.DataFrame) -> pd.DataFrame:
     """依地區統計未付款／已付款／合計，並把「儲值金」儲值單獨立成最後一列。
 
-    儲值金儲值單是預收款，不是清潔服務業績，所以不計入各地區與「加總」，
-    改成獨立的「儲值金」列（未付款＝儲值金待付款，已付款＝儲值金已付款）。
+    raw_df 跟 build_month_performance_summary() 吃的是同一種資料形狀（城市/收入類型/
+    服務/已付款/待付款，來自同一個報表頁面的 parse_html() 結果，只差在查詢時用「訂購
+    日期」而不是「清潔／服務日期」），用同一套 to_category()／detect_income_type()
+    分類，才會跟「目前總表」的儲值金判斷邏輯一致。
+
+    儲值金儲值單是預收款，不是清潔服務業績，所以不計入各地區與「加總」，改成獨立的
+    「儲值金」列（未付款＝儲值金待付款，已付款＝儲值金已付款）。
     """
     cols = ["地區", "未付款", "已付款", "未付款＋已付款"]
-    rows = []
-    stored_value_unpaid = 0
-    stored_value_paid = 0
-    stored_value_seen = False
-    for item in records:
-        if _purchase_is_cancelled(item):
-            continue
-        city = str(item.get("__city") or "")
-        if not city:
-            continue
-        amount = _purchase_amount(item)
-        if _purchase_is_stored_value_topup(item):
-            stored_value_seen = True
-            if _purchase_is_paid(item):
-                stored_value_paid += amount
-            else:
-                stored_value_unpaid += amount
-            continue
-        rows.append({"地區": city, "未付款": 0 if _purchase_is_paid(item) else amount, "已付款": amount if _purchase_is_paid(item) else 0})
-    if not rows and not stored_value_seen:
+    if raw_df.empty:
         return pd.DataFrame(columns=cols)
-    if rows:
-        out = pd.DataFrame(rows).groupby("地區", as_index=False)[["未付款", "已付款"]].sum()
-    else:
-        out = pd.DataFrame(columns=["地區", "未付款", "已付款"])
+
+    work = raw_df.copy()
+    work["類別"] = work.apply(lambda r: to_category(r["服務"], r["收入類型"]), axis=1)
+
+    # 儲值金以外的所有項目（清潔、家電、水洗、收納…）都算進地區與加總，
+    # 未分類的服務名稱也保留，避免因為新服務名稱沒被 to_category() 認得而遺漏金額。
+    service_df = work[work["類別"] != "儲值金"]
+    rows = []
+    for city in CITY_ORDER:
+        sub = service_df[service_df["城市"] == city]
+        rows.append({
+            "地區": city,
+            "未付款": sub["待付款"].sum(),
+            "已付款": sub["已付款"].sum(),
+        })
+    out = pd.DataFrame(rows, columns=["地區", "未付款", "已付款"])
     out["未付款＋已付款"] = out["未付款"] + out["已付款"]
-    out["地區"] = pd.Categorical(out["地區"], CITY_ORDER, ordered=True)
-    out = out.sort_values("地區").reset_index(drop=True)
-    out["地區"] = out["地區"].astype(str)
-    out = pd.concat([out, pd.DataFrame([{"地區": "加總", "未付款": out["未付款"].sum(), "已付款": out["已付款"].sum(), "未付款＋已付款": out["未付款＋已付款"].sum()}])], ignore_index=True)
-    if stored_value_seen:
+    out = pd.concat([out, pd.DataFrame([{
+        "地區": "加總",
+        "未付款": out["未付款"].sum(),
+        "已付款": out["已付款"].sum(),
+        "未付款＋已付款": out["未付款＋已付款"].sum(),
+    }])], ignore_index=True)
+
+    stored_value_df = work[(work["收入類型"] == "現金收入") & (work["類別"] == "儲值金")]
+    if not stored_value_df.empty:
+        unpaid = stored_value_df["待付款"].sum()
+        paid = stored_value_df["已付款"].sum()
         out = pd.concat([out, pd.DataFrame([{
             "地區": "儲值金",
-            "未付款": stored_value_unpaid,
-            "已付款": stored_value_paid,
-            "未付款＋已付款": stored_value_unpaid + stored_value_paid,
+            "未付款": unpaid,
+            "已付款": paid,
+            "未付款＋已付款": unpaid + paid,
         }])], ignore_index=True)
     return out[cols]
 
@@ -398,7 +382,12 @@ def _parallel_city_results(worker):
 
 
 def generate_order_date_report(order_start_date: str, order_end_date: str, trigger="dashboard"):
-    """只更新付款彙總，不重抓目前總表與月份保留單。"""
+    """只更新付款彙總，不重抓目前總表與月份保留單。
+
+    跟「月份業績統整」共用同一個報表頁面／parse_html() 解析邏輯，只是查詢用「訂購
+    日期」（date_s/date_e）而不是「清潔／服務日期」，這樣「儲值金」判斷才會跟「目前
+    總表」一致（見 build_order_date_summary()）。
+    """
     if order_end_date < order_start_date:
         raise ValueError("訂購日期迄日不可早於起日")
 
@@ -406,14 +395,31 @@ def generate_order_date_report(order_start_date: str, order_end_date: str, trigg
         session = requests.Session()
         account = ACCOUNTS[city]
         login(session, account["email"], account["password"])
-        items = _fetch_purchase_items(session, date_s=order_start_date, date_e=order_end_date)
-        for item in items:
-            item["__city"] = city
-        return items
+        merged = {}
+        for status in [1, 0]:
+            for keyword in get_keywords(city):
+                response = session.get(
+                    build_url(order_start_date, order_end_date, status, keyword, use_order_date=True),
+                    headers=HEADERS, allow_redirects=True,
+                )
+                response.raise_for_status()
+                for row in parse_html(response.text):
+                    key = (row["日期"], row["收入類型"], row["資料來源"], row["服務"], row["子項目"])
+                    if key not in merged:
+                        merged[key] = {
+                            "城市": city, "日期": row["日期"],
+                            "收入類型": row["收入類型"], "資料來源": row["資料來源"],
+                            "服務": row["服務"], "子項目": row["子項目"],
+                            "已付款": 0, "待付款": 0,
+                        }
+                    merged[key]["已付款"] += row["已付款"]
+                    merged[key]["待付款"] += row["待付款"]
+        return list(merged.values())
 
     city_results, errors = _parallel_city_results(worker)
-    records = [item for _, items in city_results for item in items]
-    out = build_order_date_summary(records)
+    raw_rows = [row for _, rows in city_results for row in rows]
+    raw_df = pd.DataFrame(raw_rows)
+    out = build_order_date_summary(raw_df)
     ensure_dirs()
     path = os.path.join(LATEST_DIR, "order_date_summary.csv")
     out.to_csv(path, index=False, encoding="utf-8-sig")
@@ -496,16 +502,22 @@ def generate_month_range_reports(report_start_month: str, report_end_month: str,
     }
 
 
-def build_url(start, end, status, keyword=""):
+def build_url(start, end, status, keyword="", use_order_date=False):
+    """組出報表頁查詢網址。
+
+    預設用「清潔／服務日期」（clean_date_s/clean_date_e）篩選，這是「月份業績統整」
+    在用的欄位。use_order_date=True 時改填「訂購日期」（date_s/date_e），這是
+    「訂購日期付款彙總」在用的欄位——兩者是同一個報表頁面，欄位不同而已。
+    """
     params = {
         "keyword": keyword,
         "name": "",
         "phone": "",
         "orderNo": "",
-        "date_s": "",
-        "date_e": "",
-        "clean_date_s": start,
-        "clean_date_e": end,
+        "date_s": start if use_order_date else "",
+        "date_e": end if use_order_date else "",
+        "clean_date_s": "" if use_order_date else start,
+        "clean_date_e": "" if use_order_date else end,
         "paid_at_s": "",
         "paid_at_e": "",
         "refundDateS": "",

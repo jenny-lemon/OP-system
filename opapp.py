@@ -984,7 +984,7 @@ def render_order_date_report_tab():
         st.error("訂購日期迄日不可早於起日")
     if st.button("✅ 確定並套用訂購日期區間", key="apply_order_date_range", use_container_width=True):
         _run_filtered_performance_report("order")
-    st.caption("預設起迄日皆為當日；取消單不列入，結果依地區統計未付款、已付款及合計。儲值金儲值單（非用儲值金付款的清潔訂單）獨立列在最後一列「儲值金」，不計入地區與加總。")
+    st.caption("預設起迄日皆為當日，依訂購日期查詢，結果依地區統計未付款、已付款及合計。儲值金儲值單（跟「目前總表」用同一套判斷邏輯，非用儲值金付款的清潔訂單）獨立列在最後一列「儲值金」，不計入地區與加總。")
     _show_summary_csv("order_date_summary.csv", "尚未產生付款彙總，請選擇日期後按確定。")
 
 
