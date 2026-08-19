@@ -28,6 +28,35 @@ def test_order_date_summary_excludes_cancelled_orders():
     }
 
 
+def test_order_date_summary_splits_out_stored_value_topups():
+    records = [
+        {"__city": "台北", "total": "1,000", "purchase_status": "0"},
+        {"__city": "台北", "total": "2,000", "purchase_status": "1"},
+        {"__city": "台中", "total": 500, "purchase_status": "0"},
+        # 儲值金訂單本身：購買項目開頭是「儲值金」，待付款。
+        {"__city": "台北", "total": 50000, "purchase_status": "0", "buy": "儲值金-台北(儲值金50,000贈購物金2,500)"},
+        # 儲值金訂單本身：購買項目開頭是「儲值金」，已付款。
+        {"__city": "桃園", "total": 30000, "purchase_status": "1", "buy": "儲值金-桃園(儲值金30,000)"},
+        # 用儲值金「付款」的清潔訂單：付款方式是儲值金，但購買項目是居家清潔，不能被當成儲值單。
+        {"__city": "台北", "total": 2800, "purchase_status": "1", "buy": "居家清潔", "payway": "儲值金"},
+    ]
+    out = report.build_order_date_summary(records)
+
+    assert out.iloc[0].to_dict() == {
+        "地區": "台北", "未付款": 1000, "已付款": 2000 + 2800, "未付款＋已付款": 1000 + 2000 + 2800,
+    }
+
+    total_row = out[out["地區"] == "加總"].iloc[0]
+    assert total_row.to_dict() == {
+        "地區": "加總", "未付款": 1500, "已付款": 4800, "未付款＋已付款": 6300,
+    }
+
+    stored_value_row = out.iloc[-1]
+    assert stored_value_row.to_dict() == {
+        "地區": "儲值金", "未付款": 50000, "已付款": 30000, "未付款＋已付款": 80000,
+    }
+
+
 def test_month_performance_minus_reserve_equals_net():
     month_ranges = [("2026/08", "2026-08-01", "2026-08-31")]
     raw_df = pd.DataFrame([
