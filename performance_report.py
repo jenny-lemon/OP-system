@@ -256,7 +256,8 @@ def build_order_date_summary(raw_df: pd.DataFrame, order_rows=None) -> pd.DataFr
     抓不到服務日期時，就不會有月份欄位，不會出錯，也不會動到主要欄位的數字。
 
     月份欄位是動態的：查詢結果裡的訂單，服務日期落在幾個不同月份，就出現幾組
-    「{月份}待付款/{月份}已付款」欄位，按時間排序。儲值金不拆月份，只分待付款/已付款。
+    「{月份}待付款/{月份}已付款/{月份}待付款＋已付款」欄位，按時間排序。儲值金不拆
+    月份，只分待付款/已付款。
     """
     base_cols = ["地區", "待付款", "已付款", "待付款＋已付款"]
     stored_value_cols = ["儲值金待付款", "儲值金已付款", "儲值金待付款＋已付款"]
@@ -278,7 +279,7 @@ def build_order_date_summary(raw_df: pd.DataFrame, order_rows=None) -> pd.DataFr
         order_df["服務月份"] = pd.to_datetime(order_df["日期"], errors="coerce").dt.strftime("%Y/%m")
         order_df = order_df.dropna(subset=["服務月份"])
         months = sorted(order_df["服務月份"].unique().tolist())
-    month_cols = [f"{m}{kind}" for m in months for kind in ("待付款", "已付款")]
+    month_cols = [f"{m}{kind}" for m in months for kind in ("待付款", "已付款", "待付款＋已付款")]
 
     cols = base_cols + month_cols + stored_value_cols
 
@@ -296,8 +297,11 @@ def build_order_date_summary(raw_df: pd.DataFrame, order_rows=None) -> pd.DataFr
         }
         for m in months:
             m_sub = order_df[(order_df["城市"] == city) & (order_df["服務月份"] == m)] if not order_df.empty else order_df
-            row[f"{m}待付款"] = m_sub["待付款"].sum() if not m_sub.empty else 0
-            row[f"{m}已付款"] = m_sub["已付款"].sum() if not m_sub.empty else 0
+            m_unpaid = m_sub["待付款"].sum() if not m_sub.empty else 0
+            m_paid = m_sub["已付款"].sum() if not m_sub.empty else 0
+            row[f"{m}待付款"] = m_unpaid
+            row[f"{m}已付款"] = m_paid
+            row[f"{m}待付款＋已付款"] = m_unpaid + m_paid
         sv_unpaid = sv_sub["待付款"].sum()
         sv_paid = sv_sub["已付款"].sum()
         row["儲值金待付款"] = sv_unpaid
@@ -454,7 +458,7 @@ def generate_order_date_report(order_start_date: str, order_end_date: str, trigg
                 for item in items:
                     if _purchase_is_cancelled(item):
                         continue
-                    amount = _purchase_amount(item)
+                    amount = _purchase_amount(item) - safe_int(item.get("fare") or 0)
                     if amount <= 0:
                         continue
                     date_text = str(item.get("date_clean") or item.get("service_date") or "")[:10]
@@ -714,6 +718,7 @@ def parse_html(html):
 
         paid_idx = header.index("已付款金額") if "已付款金額" in header else None
         unpaid_idx = header.index("待付款金額") if "待付款金額" in header else None
+        weekly_idx = header.index("週末加價") if "週末加價" in header else None
 
         date_idx = None
         for name in date_candidates:
@@ -734,6 +739,12 @@ def parse_html(html):
 
             paid = safe_int(row[paid_idx]) if paid_idx is not None and len(row) > paid_idx else 0
             unpaid = safe_int(row[unpaid_idx]) if unpaid_idx is not None and len(row) > unpaid_idx else 0
+
+            # 用儲值金付款時，週末加價是從儲值金餘額另外扣款的一筆（跟會員的儲值金歷程
+            # 明細對得起來），彙總表把它跟已付款金額拆成兩欄，「已付款金額」欄本身沒有
+            # 算進去，要另外加回來才是這筆訂單實際入帳的金額。
+            if income_type == "儲值金" and weekly_idx is not None and len(row) > weekly_idx:
+                paid += safe_int(row[weekly_idx])
 
             service_date = None
             if date_idx is not None and len(row) > date_idx:
