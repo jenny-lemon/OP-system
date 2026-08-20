@@ -458,7 +458,12 @@ def generate_order_date_report(order_start_date: str, order_end_date: str, trigg
                 for item in items:
                     if _purchase_is_cancelled(item):
                         continue
-                    amount = _purchase_amount(item) - safe_int(item.get("fare") or 0)
+                    # 只能用「total」欄位本身（訂單頁面上的總金額，含稅），不能用
+                    # _purchase_amount() 的 amount/price 備援——price 是未稅金額，
+                    # 而用儲值金付款的訂單 total 本身是 0（真正扣款金額要另外查儲值金
+                    # 歷程，這裡目前還沒處理），若退回去用 price 備援會把未稅金額
+                    # 誤算進待付款/已付款，金額對不起來。
+                    amount = safe_int(item.get("total") or 0) - safe_int(item.get("fare") or 0)
                     if amount <= 0:
                         continue
                     date_text = str(item.get("date_clean") or item.get("service_date") or "")[:10]

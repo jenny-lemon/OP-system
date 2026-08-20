@@ -979,6 +979,33 @@ def _show_summary_csv(filename: str, empty_message: str):
     )
 
 
+def _show_order_date_summary_tables(filename: str, empty_message: str):
+    """待付款、已付款分成兩張獨立的表格顯示（含各自的月份/儲值金欄位），
+    「待付款＋已付款」這種合計欄位不拆表、不顯示，只留在 CSV 裡供匯出。"""
+    df = _read_csv_safe(os.path.join(LATEST_DIR, filename))
+    if df.empty:
+        st.info(empty_message)
+        return
+
+    combined_cols = {c for c in df.columns if "＋" in c}
+    unpaid_cols = ["地區"] + [c for c in df.columns if c not in combined_cols and "待付款" in c]
+    paid_cols = ["地區"] + [c for c in df.columns if c not in combined_cols and "已付款" in c]
+
+    st.markdown('<div class="section-title">待付款</div>', unsafe_allow_html=True)
+    unpaid_df = df[unpaid_cols]
+    st.dataframe(
+        _format_report_df(unpaid_df), use_container_width=True, hide_index=True, height=280,
+        column_config=_report_column_config(unpaid_df),
+    )
+
+    st.markdown('<div class="section-title">已付款</div>', unsafe_allow_html=True)
+    paid_df = df[paid_cols]
+    st.dataframe(
+        _format_report_df(paid_df), use_container_width=True, hide_index=True, height=280,
+        column_config=_report_column_config(paid_df),
+    )
+
+
 def render_order_date_report_tab():
     today = datetime.now(TZ_TAIPEI).date()
     st.markdown(
@@ -1003,8 +1030,8 @@ def render_order_date_report_tab():
         st.error("訂購日期迄日不可早於起日")
     if st.button("✅ 確定並套用訂購日期區間", key="apply_order_date_range", use_container_width=True):
         _run_filtered_performance_report("order")
-    st.caption("預設起迄日皆為當日，依訂購日期查詢，結果依地區統計待付款、已付款及合計；待付款/已付款底下再依服務日期動態拆出月份欄位（查詢結果涵蓋幾個月就有幾組欄位）。儲值金（跟「目前總表」用同一套判斷邏輯，非用儲值金付款的清潔訂單）獨立成每個地區的「儲值金待付款/儲值金已付款」欄位，只分待付款/已付款、不拆月份，不計入待付款/已付款。")
-    _show_summary_csv("order_date_summary.csv", "尚未產生付款彙總，請選擇日期後按確定。")
+    st.caption("預設起迄日皆為當日，依訂購日期查詢，結果依地區統計，待付款、已付款分成兩張表；每張底下再依服務日期動態拆出月份欄位（查詢結果涵蓋幾個月就有幾組欄位），金額一律是訂單總金額扣除車馬費、含稅。儲值金（跟「目前總表」用同一套判斷邏輯，非用儲值金付款的清潔訂單）獨立成每張表各自的「儲值金待付款/儲值金已付款」欄位，不拆月份。")
+    _show_order_date_summary_tables("order_date_summary.csv", "尚未產生付款彙總，請選擇日期後按確定。")
 
 
 def render_month_performance_report_tab():
