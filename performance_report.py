@@ -239,25 +239,24 @@ def _purchase_person_hours(item) -> float:
     return people * hours
 
 
-def build_order_date_summary(raw_df: pd.DataFrame, order_rows=None) -> pd.DataFrame:
-    """依地區統計待付款／已付款／合計，待付款/已付款底下再依「服務日期」動態拆出月份欄位，
-    並把「儲值金」拆成同一列裡的獨立欄位（只分待付款/已付款，不拆月份）。
+def build_order_date_summary(raw_df: pd.DataFrame, month_rows=None) -> pd.DataFrame:
+    """依地區統計待付款／已付款／合計，待付款/已付款底下再依「服務日期」拆出固定的
+    月份欄位（本月＋4個月），並把「儲值金」拆成同一列裡的獨立欄位（只分待付款/
+    已付款，不拆月份）。
 
     raw_df 跟 build_month_performance_summary() 吃的是同一種資料形狀（城市/收入類型/
     服務/已付款/待付款，來自同一個報表頁面裡「財務彙總表」的 parse_html() 結果），用
     to_category()／detect_income_type() 分類，才會跟「目前總表」的儲值金判斷邏輯一致，
     是「待付款/已付款/儲值金待付款/儲值金已付款」這幾個總額欄位唯一的資料來源。
 
-    財務彙總表本身沒有服務日期（依服務分類彙總，不是逐筆訂單），服務日期要另外從
-    同一頁內嵌的 purchaseList JSON（逐筆訂單）取得，所以月份拆分改吃 order_rows：
-    list of {"城市","日期","已付款","待付款","是否儲值金"}（見 generate_order_date_report()
-    如何用 _fetch_purchase_items() 組出這份清單）。月份欄位只影響「待付款/已付款」底下的動態拆分，不影響
-    地區/加總/儲值金這幾個主要欄位的數字（那些永遠以 raw_df 為準）；order_rows 缺漏或
-    抓不到服務日期時，就不會有月份欄位，不會出錯，也不會動到主要欄位的數字。
-
-    月份欄位是動態的：查詢結果裡的訂單，服務日期落在幾個不同月份，就出現幾組
-    「{月份}待付款/{月份}已付款/{月份}待付款＋已付款」欄位，按時間排序。儲值金不拆
-    月份，只分待付款/已付款。
+    財務彙總表本身沒有服務日期（依服務分類彙總，不是逐筆訂單），月份拆分改吃
+    month_rows：list of {"城市","月份","已付款","待付款"}，每個月份都是額外用
+    「訂購日期＋服務日期」兩個條件一起查一次財務彙總表算出來的（見
+    generate_order_date_report()／_order_date_month_ranges()），不是自己逐筆訂單
+    加總——這樣金額口徑才會跟地區/加總欄位完全一致，不會有稅前/稅後金額混淆、
+    分頁漏單、儲值金訂單總金額顯示 0 之類的問題。月份欄位只影響「待付款/已付款」
+    底下的拆分，不影響地區/加總/儲值金這幾個主要欄位的數字（那些永遠以 raw_df
+    為準）；month_rows 缺漏時就不會有月份欄位，不會出錯。
     """
     base_cols = ["地區", "待付款", "已付款", "待付款＋已付款"]
     stored_value_cols = ["儲值金待付款", "儲值金已付款", "儲值金待付款＋已付款"]
@@ -272,13 +271,8 @@ def build_order_date_summary(raw_df: pd.DataFrame, order_rows=None) -> pd.DataFr
     service_df = work[work["類別"] != "儲值金"].copy()
     stored_value_df = work[(work["收入類型"] == "現金收入") & (work["類別"] == "儲值金")]
 
-    order_df = pd.DataFrame(order_rows) if order_rows else pd.DataFrame()
-    months = []
-    if not order_df.empty and "日期" in order_df.columns:
-        order_df = order_df[~order_df.get("是否儲值金", False).astype(bool)].copy()
-        order_df["服務月份"] = pd.to_datetime(order_df["日期"], errors="coerce").dt.strftime("%Y/%m")
-        order_df = order_df.dropna(subset=["服務月份"])
-        months = sorted(order_df["服務月份"].unique().tolist())
+    month_df = pd.DataFrame(month_rows) if month_rows else pd.DataFrame()
+    months = sorted(month_df["月份"].unique().tolist()) if not month_df.empty else []
     month_cols = [f"{m}{kind}" for m in months for kind in ("待付款", "已付款", "待付款＋已付款")]
 
     cols = base_cols + month_cols + stored_value_cols
@@ -296,7 +290,7 @@ def build_order_date_summary(raw_df: pd.DataFrame, order_rows=None) -> pd.DataFr
             "待付款＋已付款": unpaid + paid,
         }
         for m in months:
-            m_sub = order_df[(order_df["城市"] == city) & (order_df["服務月份"] == m)] if not order_df.empty else order_df
+            m_sub = month_df[(month_df["城市"] == city) & (month_df["月份"] == m)]
             m_unpaid = m_sub["待付款"].sum() if not m_sub.empty else 0
             m_paid = m_sub["已付款"].sum() if not m_sub.empty else 0
             row[f"{m}待付款"] = m_unpaid
@@ -315,11 +309,6 @@ def build_order_date_summary(raw_df: pd.DataFrame, order_rows=None) -> pd.DataFr
         **{c: out[c].sum() for c in cols[1:]},
     }])], ignore_index=True)
     return out[cols]
-
-
-def _purchase_is_stored_value_topup(item) -> bool:
-    searchable = json.dumps(item, ensure_ascii=False, default=str)
-    return "儲值金-" in searchable
 
 
 def build_month_performance_summary(raw_df: pd.DataFrame, month_ranges) -> pd.DataFrame:
@@ -413,22 +402,46 @@ def _parallel_city_results(worker):
     return results, errors
 
 
+def _order_date_month_ranges():
+    """訂購日期付款彙總拆月份用的固定區間：本月＋4個月，總共 5 個月份。"""
+    base = now_dt().replace(day=1)
+    month_index = base.month - 1 + 4
+    year = base.year + month_index // 12
+    month = month_index % 12 + 1
+    end_month = f"{year}-{month:02d}"
+    return get_report_month_ranges(base.strftime("%Y-%m"), end_month)
+
+
 def generate_order_date_report(order_start_date: str, order_end_date: str, trigger="dashboard"):
     """只更新付款彙總，不重抓目前總表與月份保留單。
 
     跟「月份業績統整」共用同一個報表頁面／parse_html() 解析邏輯，只是查詢用「訂購
     日期」（date_s/date_e）而不是「清潔／服務日期」，這樣「儲值金」判斷才會跟「目前
     總表」一致（見 build_order_date_summary()）。
+
+    月份拆分不是逐筆訂單自己加總（會遇到未稅金額、分頁、儲值金訂單總金額顯示 0
+    等各種問題），而是每個月份都用「訂購日期＋服務日期」兩個條件一起查詢一次
+    財務彙總表，直接拿後端算好的已付款/待付款金額——跟地區/加總欄位用同一套
+    parse_html()/to_category() 邏輯，金額口徑保證一致。固定查「本月＋4個月」
+    （見 _order_date_month_ranges()），涵蓋不到的月份就不會有資料。
+
+    本月這個月份用服務日期「不限起日、只限本月底」查（逾期未結的訂單服務日期
+    可能落在本月以前，這樣才不會漏掉），之後 4 個月才各自用整月起訖日查、彼此
+    不重疊。儲值金儲值單本身沒有服務日期，若落進「不限起日」這種查詢會被算進
+    去，但每一輪都還是用 to_category() 排除「儲值金」類別，所以不會滲進月份
+    欄位裡（跟地區/加總欄位排除儲值金的邏輯完全一致）。
     """
     if order_end_date < order_start_date:
         raise ValueError("訂購日期迄日不可早於起日")
+
+    month_ranges = _order_date_month_ranges()
 
     def worker(city):
         session = requests.Session()
         account = ACCOUNTS[city]
         login(session, account["email"], account["password"])
         merged = {}
-        order_rows = []
+        month_totals = {}
         for status in [1, 0]:
             for keyword in get_keywords(city):
                 response = session.get(
@@ -447,42 +460,34 @@ def generate_order_date_report(order_start_date: str, order_end_date: str, trigg
                         }
                     merged[key]["已付款"] += row["已付款"]
                     merged[key]["待付款"] += row["待付款"]
-                # 財務彙總表沒有服務日期，逐筆訂單的服務日期改用 _fetch_purchase_items()
-                # 讀取同一頁內嵌的 purchaseList JSON——這個既有函式已經處理好分頁（每頁
-                # 20 筆，讀到不滿一頁才停），不會像單頁 HTML 表格解析一樣漏掉後面分頁
-                # 的訂單，才不會讓月份拆分的總和對不上待付款/已付款的地區總額。
-                items = _fetch_purchase_items(
-                    session, date_s=order_start_date, date_e=order_end_date,
-                    purchase_status=str(status), keyword=keyword,
-                )
-                for item in items:
-                    if _purchase_is_cancelled(item):
-                        continue
-                    # 只能用「total」欄位本身（訂單頁面上的總金額，含稅），不能用
-                    # _purchase_amount() 的 amount/price 備援——price 是未稅金額，
-                    # 而用儲值金付款的訂單 total 本身是 0（真正扣款金額要另外查儲值金
-                    # 歷程，這裡目前還沒處理），若退回去用 price 備援會把未稅金額
-                    # 誤算進待付款/已付款，金額對不起來。
-                    amount = safe_int(item.get("total") or 0) - safe_int(item.get("fare") or 0)
-                    if amount <= 0:
-                        continue
-                    date_text = str(item.get("date_clean") or item.get("service_date") or "")[:10]
-                    if not date_text:
-                        continue
-                    order_rows.append({
-                        "城市": city,
-                        "日期": date_text,
-                        "已付款": amount if status == 1 else 0,
-                        "待付款": 0 if status == 1 else amount,
-                        "是否儲值金": _purchase_is_stored_value_topup(item),
-                    })
-        return list(merged.values()), order_rows
+
+                for idx, (label, m_start, m_end) in enumerate(month_ranges):
+                    # 第一個月份（本月）用服務日期「不限起日、迄本月底」查，才會把服務
+                    # 日期落在本月以前（逾期未結）的訂單也收進來，不會因為劃了本月起日
+                    # 而漏掉；之後每個月才用整月的起訖日各自查一次，彼此不重疊。
+                    clean_start = None if idx == 0 else m_start
+                    month_response = session.get(
+                        build_url(order_start_date, order_end_date, status, keyword,
+                                  use_order_date=True, clean_start=clean_start, clean_end=m_end),
+                        headers=HEADERS, allow_redirects=True,
+                    )
+                    month_response.raise_for_status()
+                    for row in parse_html(month_response.text):
+                        category = to_category(row["服務"], row["收入類型"])
+                        if category == "儲值金":
+                            continue
+                        month_key = (city, label)
+                        if month_key not in month_totals:
+                            month_totals[month_key] = {"城市": city, "月份": label, "已付款": 0, "待付款": 0}
+                        month_totals[month_key]["已付款"] += row["已付款"]
+                        month_totals[month_key]["待付款"] += row["待付款"]
+        return list(merged.values()), list(month_totals.values())
 
     city_results, errors = _parallel_city_results(worker)
     raw_rows = [row for _, (rows, _) in city_results for row in rows]
-    order_rows = [item for _, (_, items) in city_results for item in items]
+    month_rows = [row for _, (_, rows) in city_results for row in rows]
     raw_df = pd.DataFrame(raw_rows)
-    out = build_order_date_summary(raw_df, order_rows=order_rows)
+    out = build_order_date_summary(raw_df, month_rows=month_rows)
     ensure_dirs()
     path = os.path.join(LATEST_DIR, "order_date_summary.csv")
     out.to_csv(path, index=False, encoding="utf-8-sig")
@@ -565,12 +570,18 @@ def generate_month_range_reports(report_start_month: str, report_end_month: str,
     }
 
 
-def build_url(start, end, status, keyword="", use_order_date=False):
+def build_url(start, end, status, keyword="", use_order_date=False, clean_start=None, clean_end=None):
     """組出報表頁查詢網址。
 
     預設用「清潔／服務日期」（clean_date_s/clean_date_e）篩選，這是「月份業績統整」
     在用的欄位。use_order_date=True 時改填「訂購日期」（date_s/date_e），這是
     「訂購日期付款彙總」在用的欄位——兩者是同一個報表頁面，欄位不同而已。
+
+    clean_start/clean_end：另外指定「服務日期」區間，跟 use_order_date 無關，用在
+    「訂購日期＋服務日期」要同時套用篩選的情境（訂購日期付款彙總依服務日期拆月份，
+    就是靠這個參數讓查詢同時帶 date_s/date_e 跟 clean_date_s/clean_date_e，讓後端
+    直接算出該月份彙總表的已付款/待付款金額，不用自己逐筆訂單加總、也不會有稅前/
+    稅後金額搞混或分頁漏單的問題）。
     """
     params = {
         "keyword": keyword,
@@ -579,8 +590,8 @@ def build_url(start, end, status, keyword="", use_order_date=False):
         "orderNo": "",
         "date_s": start if use_order_date else "",
         "date_e": end if use_order_date else "",
-        "clean_date_s": "" if use_order_date else start,
-        "clean_date_e": "" if use_order_date else end,
+        "clean_date_s": clean_start if clean_start is not None else ("" if use_order_date else start),
+        "clean_date_e": clean_end if clean_end is not None else ("" if use_order_date else end),
         "paid_at_s": "",
         "paid_at_e": "",
         "refundDateS": "",
