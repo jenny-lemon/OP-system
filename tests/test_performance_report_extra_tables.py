@@ -22,11 +22,17 @@ def test_order_date_summary_groups_by_city_and_totals():
     out = report.build_order_date_summary(raw_df)
     assert out.iloc[0].to_dict() == {
         "地區": "台北", "待付款": 1000, "已付款": 2000, "待付款＋已付款": 3000,
+        "家電待付款": 0, "家電已付款": 0, "家電待付款＋已付款": 0,
+        "水洗待付款": 0, "水洗已付款": 0, "水洗待付款＋已付款": 0,
+        "收納待付款": 0, "收納已付款": 0, "收納待付款＋已付款": 0,
         "儲值金待付款": 0, "儲值金已付款": 0, "儲值金待付款＋已付款": 0,
     }
     total_row = out[out["地區"] == "加總"].iloc[0]
     assert total_row.to_dict() == {
         "地區": "加總", "待付款": 1500, "已付款": 2000, "待付款＋已付款": 3500,
+        "家電待付款": 0, "家電已付款": 0, "家電待付款＋已付款": 0,
+        "水洗待付款": 0, "水洗已付款": 0, "水洗待付款＋已付款": 0,
+        "收納待付款": 0, "收納已付款": 0, "收納待付款＋已付款": 0,
         "儲值金待付款": 0, "儲值金已付款": 0, "儲值金待付款＋已付款": 0,
     }
     # 每個地區都要有自己的一列，不能像舊版那樣另外多一列「儲值金」。
@@ -34,6 +40,9 @@ def test_order_date_summary_groups_by_city_and_totals():
     # 沒有傳 order_rows，就不會有月份欄位，不會出錯。
     assert list(out.columns) == [
         "地區", "待付款", "已付款", "待付款＋已付款",
+        "家電待付款", "家電已付款", "家電待付款＋已付款",
+        "水洗待付款", "水洗已付款", "水洗待付款＋已付款",
+        "收納待付款", "收納已付款", "收納待付款＋已付款",
         "儲值金待付款", "儲值金已付款", "儲值金待付款＋已付款",
     ]
 
@@ -100,6 +109,78 @@ def test_order_date_summary_splits_out_stored_value_by_city():
     assert total_row["儲值金待付款"] == 50000
     assert total_row["儲值金已付款"] == 30000
     assert total_row["儲值金待付款＋已付款"] == 80000
+
+
+def test_order_date_summary_splits_out_appliance_and_water_wash_by_city():
+    raw_df = pd.DataFrame([
+        # raw_df 的「服務」欄位是 parse_html() 正規化過的值：「冷氣機清潔」會被
+        # normalize 成「冷氣清潔」、「洗衣機」會被 normalize 成「洗衣機清潔」，
+        # to_category() 才認得出來，跟 build_region4_df() 對家電的算法一致。
+        {"城市": "台北", "收入類型": "現金收入", "服務": "冷氣清潔", "已付款": 1200, "待付款": 0},
+        {"城市": "台北", "收入類型": "現金收入", "服務": "洗衣機清潔", "已付款": 0, "待付款": 800},
+        # 用儲值金付款的家電訂單一樣要算進家電欄位，不受收入類型影響。
+        {"城市": "台北", "收入類型": "儲值金", "服務": "冷氣清潔", "已付款": 600, "待付款": 0},
+        {"城市": "台中", "收入類型": "現金收入", "服務": "水洗", "已付款": 300, "待付款": 100},
+        {"城市": "台中", "收入類型": "儲值金", "服務": "水洗", "已付款": 0, "待付款": 200},
+        # 一般清潔訂單留在原本的待付款/已付款。
+        {"城市": "台北", "收入類型": "現金收入", "服務": "居家清潔", "已付款": 2800, "待付款": 0},
+    ])
+    out = report.build_order_date_summary(raw_df)
+
+    taipei_row = out[out["地區"] == "台北"].iloc[0]
+    assert taipei_row["待付款"] == 0
+    assert taipei_row["已付款"] == 2800
+    assert taipei_row["家電待付款"] == 800
+    assert taipei_row["家電已付款"] == 1800
+    assert taipei_row["家電待付款＋已付款"] == 2600
+
+    taichung_row = out[out["地區"] == "台中"].iloc[0]
+    assert taichung_row["待付款"] == 0
+    assert taichung_row["已付款"] == 0
+    assert taichung_row["水洗待付款"] == 300
+    assert taichung_row["水洗已付款"] == 300
+    assert taichung_row["水洗待付款＋已付款"] == 600
+
+    total_row = out[out["地區"] == "加總"].iloc[0]
+    assert total_row["待付款"] == 0
+    assert total_row["已付款"] == 2800
+    assert total_row["家電待付款"] == 800
+    assert total_row["家電已付款"] == 1800
+    assert total_row["水洗待付款"] == 300
+    assert total_row["水洗已付款"] == 300
+
+
+def test_order_date_summary_splits_out_storage_by_city():
+    raw_df = pd.DataFrame([
+        {"城市": "台北", "收入類型": "現金收入", "服務": "收納", "已付款": 1500, "待付款": 0},
+        # 用儲值金付款的收納訂單一樣要算進收納欄位，不受收入類型影響。
+        {"城市": "台北", "收入類型": "儲值金", "服務": "收納", "已付款": 0, "待付款": 500},
+        {"城市": "桃園", "收入類型": "現金收入", "服務": "收納", "已付款": 0, "待付款": 700},
+        # 一般清潔訂單留在原本的待付款/已付款。
+        {"城市": "台北", "收入類型": "現金收入", "服務": "居家清潔", "已付款": 2800, "待付款": 0},
+    ])
+    out = report.build_order_date_summary(raw_df)
+
+    taipei_row = out[out["地區"] == "台北"].iloc[0]
+    assert taipei_row["待付款"] == 0
+    assert taipei_row["已付款"] == 2800
+    assert taipei_row["收納待付款"] == 500
+    assert taipei_row["收納已付款"] == 1500
+    assert taipei_row["收納待付款＋已付款"] == 2000
+
+    taoyuan_row = out[out["地區"] == "桃園"].iloc[0]
+    assert taoyuan_row["待付款"] == 0
+    assert taoyuan_row["已付款"] == 0
+    assert taoyuan_row["收納待付款"] == 700
+    assert taoyuan_row["收納已付款"] == 0
+    assert taoyuan_row["收納待付款＋已付款"] == 700
+
+    total_row = out[out["地區"] == "加總"].iloc[0]
+    assert total_row["待付款"] == 0
+    assert total_row["已付款"] == 2800
+    assert total_row["收納待付款"] == 1200
+    assert total_row["收納已付款"] == 1500
+    assert total_row["收納待付款＋已付款"] == 2700
 
 
 def test_purchase_is_stored_value_topup_detects_order_title():
