@@ -12,6 +12,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Patch and verify
         run: |
+          python -m pip install -q pytest pandas requests beautifulsoup4 streamlit
           python scripts/fix_order_date_income_scope.py
           python -m py_compile performance_report.py order_date_service_report.py order_date_report_ui.py opapp.py
           pytest -q tests/test_performance_report_extra_tables.py
