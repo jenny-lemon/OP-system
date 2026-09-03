@@ -1,0 +1,22 @@
+name: Fix order date income scope
+on:
+  push:
+    paths:
+      - scripts/fix_order_date_income_scope.py
+permissions:
+  contents: write
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Patch and verify
+        run: |
+          python scripts/fix_order_date_income_scope.py
+          python -m py_compile performance_report.py order_date_service_report.py order_date_report_ui.py opapp.py
+          git config user.name github-actions
+          git config user.email github-actions@github.com
+          git add performance_report.py order_date_service_report.py
+          git diff --cached --check
+          git commit -m "Fix order date payment income scope"
+          git push
