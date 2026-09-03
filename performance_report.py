@@ -241,8 +241,8 @@ def _purchase_person_hours(item) -> float:
 
 def build_order_date_summary(raw_df: pd.DataFrame, month_rows=None) -> pd.DataFrame:
     """依地區統計待付款／已付款／合計，待付款/已付款底下再依「服務日期」拆出固定的
-    月份欄位（本月＋4個月），並把「儲值金」「家電」（冷氣＋洗衣機）「水洗」「收納」
-    各自拆成同一列裡的獨立欄位（只分待付款/已付款，不拆月份）。
+    月份欄位（本月＋4個月），並把「儲值金」拆成同一列裡的獨立欄位（只分待付款/
+    已付款，不拆月份）。
 
     raw_df 跟 build_month_performance_summary() 吃的是同一種資料形狀（城市/收入類型/
     服務/已付款/待付款，來自同一個報表頁面裡「財務彙總表」的 parse_html() 結果），用
@@ -259,38 +259,28 @@ def build_order_date_summary(raw_df: pd.DataFrame, month_rows=None) -> pd.DataFr
     為準）；month_rows 缺漏時就不會有月份欄位，不會出錯。
     """
     base_cols = ["地區", "待付款", "已付款", "待付款＋已付款"]
-    appliance_cols = ["家電待付款", "家電已付款", "家電待付款＋已付款"]
-    water_wash_cols = ["水洗待付款", "水洗已付款", "水洗待付款＋已付款"]
-    storage_cols = ["收納待付款", "收納已付款", "收納待付款＋已付款"]
     stored_value_cols = ["儲值金待付款", "儲值金已付款", "儲值金待付款＋已付款"]
     if raw_df.empty:
-        return pd.DataFrame(columns=base_cols + appliance_cols + water_wash_cols + storage_cols + stored_value_cols)
+        return pd.DataFrame(columns=base_cols + stored_value_cols)
 
     work = raw_df.copy()
     work["類別"] = work.apply(lambda r: to_category(r["服務"], r["收入類型"]), axis=1)
 
-    # 儲值金、家電（冷氣＋洗衣機）、水洗、收納以外的所有項目（清潔…）都算進
-    # 「待付款/已付款」，未分類的服務名稱也保留，避免因為新服務名稱沒被
-    # to_category() 認得而遺漏金額。
-    service_df = work[~work["類別"].isin(["儲值金", "冷氣", "洗衣機", "水洗", "收納"])].copy()
+    # 儲值金以外的所有項目（清潔、家電、水洗、收納…）都算進「待付款/已付款」，
+    # 未分類的服務名稱也保留，避免因為新服務名稱沒被 to_category() 認得而遺漏金額。
+    service_df = work[work["類別"] != "儲值金"].copy()
     stored_value_df = work[(work["收入類型"] == "現金收入") & (work["類別"] == "儲值金")]
-    appliance_df = work[work["類別"].isin(["冷氣", "洗衣機"])]
-    water_wash_df = work[work["類別"] == "水洗"]
-    storage_df = work[work["類別"] == "收納"]
 
     month_df = pd.DataFrame(month_rows) if month_rows else pd.DataFrame()
     months = sorted(month_df["月份"].unique().tolist()) if not month_df.empty else []
     month_cols = [f"{m}{kind}" for m in months for kind in ("待付款", "已付款", "待付款＋已付款")]
 
-    cols = base_cols + month_cols + appliance_cols + water_wash_cols + storage_cols + stored_value_cols
+    cols = base_cols + month_cols + stored_value_cols
 
     rows = []
     for city in CITY_ORDER:
         svc_sub = service_df[service_df["城市"] == city]
         sv_sub = stored_value_df[stored_value_df["城市"] == city]
-        appl_sub = appliance_df[appliance_df["城市"] == city]
-        ww_sub = water_wash_df[water_wash_df["城市"] == city]
-        storage_sub = storage_df[storage_df["城市"] == city]
         unpaid = svc_sub["待付款"].sum()
         paid = svc_sub["已付款"].sum()
         row = {
@@ -306,21 +296,6 @@ def build_order_date_summary(raw_df: pd.DataFrame, month_rows=None) -> pd.DataFr
             row[f"{m}待付款"] = m_unpaid
             row[f"{m}已付款"] = m_paid
             row[f"{m}待付款＋已付款"] = m_unpaid + m_paid
-        appl_unpaid = appl_sub["待付款"].sum()
-        appl_paid = appl_sub["已付款"].sum()
-        row["家電待付款"] = appl_unpaid
-        row["家電已付款"] = appl_paid
-        row["家電待付款＋已付款"] = appl_unpaid + appl_paid
-        ww_unpaid = ww_sub["待付款"].sum()
-        ww_paid = ww_sub["已付款"].sum()
-        row["水洗待付款"] = ww_unpaid
-        row["水洗已付款"] = ww_paid
-        row["水洗待付款＋已付款"] = ww_unpaid + ww_paid
-        storage_unpaid = storage_sub["待付款"].sum()
-        storage_paid = storage_sub["已付款"].sum()
-        row["收納待付款"] = storage_unpaid
-        row["收納已付款"] = storage_paid
-        row["收納待付款＋已付款"] = storage_unpaid + storage_paid
         sv_unpaid = sv_sub["待付款"].sum()
         sv_paid = sv_sub["已付款"].sum()
         row["儲值金待付款"] = sv_unpaid
@@ -453,9 +428,8 @@ def generate_order_date_report(order_start_date: str, order_end_date: str, trigg
     本月這個月份用服務日期「不限起日、只限本月底」查（逾期未結的訂單服務日期
     可能落在本月以前，這樣才不會漏掉），之後 4 個月才各自用整月起訖日查、彼此
     不重疊。儲值金儲值單本身沒有服務日期，若落進「不限起日」這種查詢會被算進
-    去，但每一輪都還是用 to_category() 排除「儲值金」「冷氣」「洗衣機」「水洗」
-    「收納」這幾個類別，所以不會滲進月份欄位裡（跟地區/加總欄位排除這幾個
-    類別的邏輯完全一致）。
+    去，但每一輪都還是用 to_category() 排除「儲值金」類別，所以不會滲進月份
+    欄位裡（跟地區/加總欄位排除儲值金的邏輯完全一致）。
     """
     if order_end_date < order_start_date:
         raise ValueError("訂購日期迄日不可早於起日")
@@ -500,7 +474,7 @@ def generate_order_date_report(order_start_date: str, order_end_date: str, trigg
                     month_response.raise_for_status()
                     for row in parse_html(month_response.text):
                         category = to_category(row["服務"], row["收入類型"])
-                        if category in ("儲值金", "冷氣", "洗衣機", "水洗", "收納"):
+                        if category == "儲值金":
                             continue
                         month_key = (city, label)
                         if month_key not in month_totals:
