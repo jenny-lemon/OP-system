@@ -25,8 +25,6 @@ if old not in s:
     raise SystemExit('parse_html signature target not found')
 s = s.replace(old, new, 1)
 
-# generate_order_date_report 會分 status=1/0 查詢；把 status 傳入 parse_html，
-# 週末加價才能落在正確的已付款／待付款欄位。
 start = s.index('def generate_order_date_report(')
 end = s.index('\ndef generate_month_range_reports(', start)
 block = s[start:end]
@@ -38,7 +36,6 @@ block = block.replace(old_call, 'parse_html(response.text, payment_status=status
 s = s[:start] + block + s[end:]
 p.write_text(s, encoding='utf-8')
 
-# 家電／水洗報表同樣分 status 查詢，沿用完全相同口徑。
 p = Path('order_date_service_report.py')
 s = p.read_text(encoding='utf-8')
 old = 'for item in report.parse_html(response.text):'
@@ -48,7 +45,6 @@ if old not in s:
 s = s.replace(old, new, 1)
 p.write_text(s, encoding='utf-8')
 
-# 補回歸測試：儲值金週末加價依付款狀態加到正確欄位，現金收入不加。
 p = Path('tests/test_performance_report_extra_tables.py')
 s = p.read_text(encoding='utf-8')
 marker = '\ndef test_purchase_is_stored_value_topup_detects_order_title():'
@@ -74,3 +70,5 @@ if 'test_parse_html_adds_stored_weekend_surcharge_to_matching_payment_status' no
         raise SystemExit('test insertion marker not found')
     s = s.replace(marker, test + marker, 1)
 p.write_text(s, encoding='utf-8')
+
+# trigger 2026-09-04
