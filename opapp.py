@@ -9,6 +9,7 @@ from datetime import datetime, timedelta, timezone
 # 目的只剩一個：確保 dashboard_main 按「更新資料」時一定會落檔。
 # 不可以在這裡再呼叫 persist_dashboard_payload()，否則同一次更新會寫入兩次。
 import performance_report as _performance_report
+import order_date_report_ui as _order_date_report_ui
 
 LATEST_DIR = _performance_report.LATEST_DIR
 DAILY_HISTORY_DIR = _performance_report.DAILY_HISTORY_DIR
@@ -954,6 +955,11 @@ def _run_filtered_performance_report(scope: str):
                 order_end.strftime("%Y-%m-%d"),
                 trigger="dashboard",
             )
+            _order_date_report_ui.generate_service_report(
+                order_start.strftime("%Y-%m-%d"),
+                order_end.strftime("%Y-%m-%d"),
+                trigger="dashboard",
+            )
     elif scope == "month":
         with st.spinner("正在更新月份業績與保留單…"):
             result = _performance_report.generate_month_range_reports(
@@ -1005,6 +1011,10 @@ def _show_order_date_summary_tables(filename: str, empty_message: str):
         column_config=_report_column_config(paid_df),
     )
 
+    _order_date_report_ui.show_combined_table(
+        df, _format_report_df, _report_column_config
+    )
+
 
 def render_order_date_report_tab():
     today = datetime.now(TZ_TAIPEI).date()
@@ -1032,6 +1042,9 @@ def render_order_date_report_tab():
         _run_filtered_performance_report("order")
     st.caption("預設起迄日皆為當日，依訂購日期查詢，結果依地區統計，待付款、已付款分成兩張表；每張底下再依服務日期拆出固定的月份欄位（本月＋4個月），金額都是後端財務彙總表直接算好的含稅總金額（已扣車馬費），跟地區/加總欄位同一套邏輯、口徑一致。儲值金（跟「目前總表」用同一套判斷邏輯，非用儲值金付款的清潔訂單）獨立成每張表各自的「儲值金待付款/儲值金已付款」欄位，不拆月份。")
     _show_order_date_summary_tables("order_date_summary.csv", "尚未產生付款彙總，請選擇日期後按確定。")
+    _order_date_report_ui.show_service_tables(
+        LATEST_DIR, _read_csv_safe, _format_report_df, _report_column_config
+    )
 
 
 def render_month_performance_report_tab():
